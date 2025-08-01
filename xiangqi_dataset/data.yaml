@@ -1,0 +1,19 @@
+path: xiangqi_dataset
+train: images/train
+val: images/val
+nc: 14
+names: 
+  0: R_K  # Tướng đỏ
+  1: R_C  # Xe đỏ
+  2: R_H  # Mã đỏ
+  3: R_E  # Tượng đỏ
+  4: R_A  # Sĩ đỏ
+  5: R_P  # Pháo đỏ
+  6: R_S  # Tốt đỏ
+  7: B_K  # Tướng đen
+  8: B_C  # Xe đen
+  9: B_H  # Mã đen
+  10: B_E  # Tượng đen
+  11: B_A  # Sĩ đen
+  12: B_P  # Pháo đen
+  13: B_S  # Tốt đen
