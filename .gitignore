@@ -1,0 +1,11 @@
+/input/**
+/output/**
+/xiangqi_dataset/train/labels.cache
+/xiangqi_dataset/test/labels.cache
+/xiangqi_dataset/valid/labels.cache
+/xiangqi_dataset/train/images/*.jpg
+/xiangqi_dataset/test/images/*.jpg
+/xiangqi_dataset/valid/images/*.jpg
+/xiangqi_dataset/train/labels/**
+/xiangqi_dataset/test/labels/**
+/xiangqi_dataset/valid/labels/**
