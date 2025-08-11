@@ -1,0 +1,14 @@
+train: ./train/images
+val: ./valid/images
+test: ./test/images
+
+nc: 14
+names: ['b_shi', 'b_pao', 'b_ju', 'b_xiang', 'b_jiang', 'b_ma', 'b_zu',
+        'r_shi', 'r_pao', 'r_ju', 'r_xiang', 'r_jiang', 'r_ma', 'r_bing']
+
+roboflow:
+  workspace: chinese-chess-belvh
+  project: chinese-chess-detect-for-yolo
+  version: 8
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/chinese-chess-belvh/chinese-chess-detect-for-yolo/dataset/8
