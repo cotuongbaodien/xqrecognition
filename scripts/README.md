@@ -17,3 +17,13 @@ output: `scripts/dataset/train` and `scripts/dataset/valid`
 ```bash
 python split_dataset.py
 ```
+
+## Generate labels in COCO format
+
+input: `scripts/coco/input`
+process: format from coco to YOLO format
+output: `scripts/coco/output`
+
+```bash
+python format_coco.py
+```

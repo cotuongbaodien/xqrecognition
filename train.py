@@ -63,12 +63,12 @@ def train_model():
     training_config = {
         'data': 'dataset/data.yaml',
         'epochs': 50,
-        'imgsz': 640,
+        'imgsz': 13440,
         'batch': 16,
         'patience': 20,
         'save': True,
         'save_period': 10,
-        'cache': True,
+        'cache': False,
         'device': 0 if torch.cuda.is_available() else 'mps',
         'workers': 8,
         'project': 'runs/detect',
@@ -105,9 +105,11 @@ def detect_pieces(image_path):
     if image is None:
         print("Không thể đọc ảnh!")
         return
-    model = YOLO(f"{target_dir}/best.v1.pt")
+    version = int(open(f"{target_dir}/version", "r").read())
+    model_size = f"{target_dir}/best.v{version}.pt"
+    model = YOLO(model_size)
     results = model(image)
-
+    print(f"Model size: {model_size}")
     for box in results[0].boxes:
         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
         class_id = int(box.cls[0].cpu().numpy())
@@ -149,5 +151,5 @@ def detect_pieces(image_path):
 
 
 if __name__ == "__main__":
-    # train_model()
-    detect_pieces("input/2.png")
+    train_model()
+    # detect_pieces("input/2.png")
