@@ -54,7 +54,8 @@ DISPLAY_NAMES = {
 
 
 def train_model():
-    model_size = "yolo12s.pt"
+    version = int(open(f"{target_dir}/version", "r").read())
+    model_size = f"{target_dir}/best.v{version}.pt"
     model = YOLO(model_size)
     print(f"Model loaded: {model_size}")
     print(f"Model summary:")
@@ -92,7 +93,10 @@ def train_model():
         'val': True,
     }
     model.train(**training_config)
-    model.save(f"{target_dir}/best.pt")
+    version += 1
+    model.save(f"{target_dir}/best.v{version}.pt")
+    with open(f"{target_dir}/version", "w") as f:
+        f.write(str(version))
     return model
 
 
@@ -101,7 +105,7 @@ def detect_pieces(image_path):
     if image is None:
         print("Không thể đọc ảnh!")
         return
-    model = YOLO(f"{target_dir}/best.pt")
+    model = YOLO(f"{target_dir}/best.v1.pt")
     results = model(image)
 
     for box in results[0].boxes:
