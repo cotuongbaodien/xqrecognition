@@ -43,7 +43,7 @@ for target in ["train", "valid", "test"]:
                 y_c = (y + bh / 2) / h
                 bw /= w
                 bh /= h
-                f.write(f"{class_id} {x_c} {y_c} {bw} {bh}\n")
+                f.write(f"{class_id - 1} {x_c} {y_c} {bw} {bh}\n")
         
         new_img_path = os.path.join(images_dir, img_file)
         img.save(new_img_path)

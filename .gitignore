@@ -11,3 +11,5 @@
 /dataset/valid/labels/**
 /runs/**
 /target/
+/scripts/coco/input/**
+/scripts/coco/output/**

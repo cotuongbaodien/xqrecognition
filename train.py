@@ -57,13 +57,11 @@ def train_model():
     version = int(open(f"{target_dir}/version", "r").read())
     model_size = f"{target_dir}/best.v{version}.pt"
     model = YOLO(model_size)
-    print(f"Model loaded: {model_size}")
-    print(f"Model summary:")
     model.info()
     training_config = {
         'data': 'dataset/data.yaml',
         'epochs': 50,
-        'imgsz': 13440,
+        'imgsz': 640,
         'batch': 16,
         'patience': 20,
         'save': True,
@@ -106,7 +104,8 @@ def detect_pieces(image_path):
         print("Không thể đọc ảnh!")
         return
     version = int(open(f"{target_dir}/version", "r").read())
-    model_size = f"{target_dir}/best.v{version}.pt"
+    # model_size = f"{target_dir}/best.v{version}.pt"
+    model_size = f"runs/detect/xiangqi_model/weights/last.pt"
     model = YOLO(model_size)
     results = model(image)
     print(f"Model size: {model_size}")
@@ -152,4 +151,5 @@ def detect_pieces(image_path):
 
 if __name__ == "__main__":
     train_model()
+    # detect_pieces("input/1.jpg")
     # detect_pieces("input/2.png")
