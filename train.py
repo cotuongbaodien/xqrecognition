@@ -1,9 +1,11 @@
 import os
 import cv2
-import numpy as np
 from ultralytics import YOLO
 import torch
 from pathlib import Path
+import argparse
+
+import yaml
 
 # Kiểm tra GPU
 if torch.cuda.is_available():
@@ -11,85 +13,116 @@ if torch.cuda.is_available():
 else:
     print("No GPU detected, using CPU")
 
+if torch.backends.mps.is_available():
+    print("Using MPS")
+    torch.mps.empty_cache()
+else:
+    print("No MPS detected, using CPU")
+
+
 base_dir = Path(__file__).parent
 target_dir = f"{base_dir}/target"
-# dataset_dir = "xiangqi_dataset"
-# os.makedirs(f"{dataset_dir}/images/train", exist_ok=True)
-# os.makedirs(f"{dataset_dir}/images/valid", exist_ok=True)
-# os.makedirs(f"{dataset_dir}/labels/train", exist_ok=True)
-# os.makedirs(f"{dataset_dir}/labels/valid", exist_ok=True)
-CLASS_NAMES = {
-    0: "Black Advisor",
-    1: "Red Advisor",
-    2: "Black Cannon",
-    3: "Red Cannon",
-    4: "Black Elephant",
-    5: "Red Elephant",
-    6: "Black King",
-    7: "Red King",
-    8: "Black Horse",
-    9: "Red Horse",
-    10: "Black Soldier",
-    11: "Red Soldier",
-    12: "Black Chariot",
-    13: "Red Chariot",
-}
+CLASS_NAMES = {}
+with open(f"{base_dir}/dataset/data.yaml", "r") as f:
+    data = yaml.load(f, Loader=yaml.FullLoader)
+    CLASS_NAMES.update({i: name for i, name in enumerate(data["names"])})
 
 DISPLAY_NAMES = {
-    "Black Advisor": "A_B",
-    "Red Advisor": "A_R",
-    "Black Cannon": "Ca_B",
-    "Red Cannon": "Ca_R",
-    "Black Elephant": "E_B",
-    "Red Elephant": "E_R",
-    "Black King": "K_B",
-    "Red King": "K_R",
-    "Black Horse": "H_B",
-    "Red Horse": "H_R",
-    "Black Soldier": "S_B",
-    "Red Soldier": "S_R",
-    "Black Chariot": "C_B",
-    "Red Chariot": "C_R",
+    "Black Advisor": "S",
+    "Red Advisor": "S",
+    "Black Cannon": "P",
+    "Red Cannon": "P",
+    "Black Elephant": "T",
+    "Red Elephant": "T",
+    "Black General": "V",
+    "Red General": "V",
+    "Black Horse": "M",
+    "Red Horse": "M",
+    "Black Soldier": "C",
+    "Red Soldier": "C",
+    "Black Chariot": "X",
+    "Red Chariot": "X",
+    "intersection": "R"
 }
+
+
+def get_version():
+    try:
+        version = int(open(f"{target_dir}/version", "r").read())
+        return version
+    except:
+        return 0
 
 
 def train_model():
-    version = int(open(f"{target_dir}/version", "r").read())
-    model_size = f"{target_dir}/best.v{version}.pt"
+    version = get_version()
+    model_size = f"{target_dir}/best.v{version}.pt" if version > 0 else f"{target_dir}/yolov12s.pt"
+    print(f"===============Model size: {model_size}")
     model = YOLO(model_size)
     model.info()
+    
+    # Cải thiện cấu hình training cho YOLOv12
     training_config = {
         'data': 'dataset/data.yaml',
-        'epochs': 50,
+        'epochs': 100,  # Tăng từ 50 lên 100
         'imgsz': 640,
         'batch': 16,
-        'patience': 20,
+        'patience': 25,  # Tăng patience
         'save': True,
         'save_period': 10,
-        'cache': False,
-        'device': 0 if torch.cuda.is_available() else 'mps',
-        'workers': 8,
+        'cache': 'ram',
+        'device': 'mps' if torch.backends.mps.is_available() else 'cpu',
+        'workers': 4,
         'project': 'runs/detect',
-        'name': 'xiangqi_model',
+        'name': 'xiangqi_yolo12_model',
         'exist_ok': True,
         'pretrained': True,
         'optimizer': 'auto',
         'verbose': True,
         'seed': 42,
-        'deterministic': True,
+        'deterministic': False,
         'single_cls': False,
         'rect': False,
-        'cos_lr': False,
+        'cos_lr': True,
         'close_mosaic': 10,
         'resume': False,
-        'amp': True,
+        'amp': True,  # Bật mixed precision
         'fraction': 1.0,
         'profile': False,
         'overlap_mask': True,
         'mask_ratio': 4,
-        'dropout': 0.0,
+        'dropout': 0.1,  # Tăng dropout
         'val': True,
+        # Thêm các hyperparameters mới cho YOLOv12
+        'lr0': 0.01,
+        'lrf': 0.01,
+        'momentum': 0.937,
+        'weight_decay': 0.0005,
+        'warmup_epochs': 3,
+        'warmup_momentum': 0.8,
+        'warmup_bias_lr': 0.1,
+        'box': 7.5,
+        'cls': 0.5,
+        'dfl': 1.5,
+        'pose': 12.0,
+        'kobj': 2.0,
+        'label_smoothing': 0.0,
+        'nbs': 64,
+        'hsv_h': 0.015,
+        'hsv_s': 0.7,
+        'hsv_v': 0.4,
+        'degrees': 0.0,
+        'translate': 0.1,
+        'scale': 0.5,
+        'shear': 0.0,
+        'perspective': 0.0,
+        'flipud': 0.0,
+        'fliplr': 0.5,
+        'mosaic': 1.0,
+        'mixup': 0.0,
+        'copy_paste': 0.0,
     }
+    
     model.train(**training_config)
     version += 1
     model.save(f"{target_dir}/best.v{version}.pt")
@@ -103,17 +136,19 @@ def detect_pieces(image_path):
     if image is None:
         print("Không thể đọc ảnh!")
         return
-    version = int(open(f"{target_dir}/version", "r").read())
-    # model_size = f"{target_dir}/best.v{version}.pt"
-    model_size = f"runs/detect/xiangqi_model/weights/last.pt"
+    version = get_version()
+    model_size = f"{target_dir}/best.v{version}.pt" if version > 0 else f"{target_dir}/yolov12s.pt"
+    print(f"===============Model: {model_size}")
     model = YOLO(model_size)
     results = model(image)
-    print(f"Model size: {model_size}")
     for box in results[0].boxes:
         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
         class_id = int(box.cls[0].cpu().numpy())
         confidence = float(box.conf[0].cpu().numpy())
         class_name = CLASS_NAMES.get(class_id, f"Unknown-{class_id}")
+        if class_name == "intersection":
+            continue
+        print(f"Class Name: {class_name}, Confidence: {confidence}")
         color_name = class_name.split(" ")[0]
         color = (0, 0, 255) if color_name == "Red" else (255, 0, 0)
         cv2.rectangle(
@@ -146,10 +181,42 @@ def detect_pieces(image_path):
             (255, 255, 255),
             2
         )
-    cv2.imwrite("output/result.jpg", image)
+    cv2.imwrite(f"output/{image_path.split('/')[-1]}_result.jpg", image)
 
 
 if __name__ == "__main__":
-    train_model()
-    # detect_pieces("input/1.jpg")
-    # detect_pieces("input/2.png")
+    parser = argparse.ArgumentParser(
+        description='Chess AI Training and Detection Tool')
+    parser.add_argument('mode', choices=['train', 'detect'],
+                        help='Mode to run: train or detect')
+    parser.add_argument('--image', '-i', type=str, default='',
+                        help='Image path for detection mode (required when mode=detect)')
+    parser.add_argument('--output', '-o', type=str, default='output/result.jpg',
+                        help='Output path for detection results (default: output/result.jpg)')
+
+    args = parser.parse_args()
+
+    if args.mode == 'train':
+        print("Starting training mode...")
+        train_model()
+        print("Training completed!")
+
+    elif args.mode == 'detect':
+        if args.image and os.path.exists(args.image):
+            print(f"Starting detection mode on image: {args.image}")
+            detect_pieces(args.image)
+            print(f"Detection completed! Result saved to: {args.output}")
+        else:
+            for ipath in [
+                "input/test1.png",
+                "input/test2.png",
+                "input/test3.jpg",
+                "input/test4.jpg",
+                "input/test5.jpg",
+                "input/test7.jpg",
+                "input/test9.jpg",
+                "input/test10.png"
+            ]:
+                print(f"Starting detection mode on image: {ipath}")
+                detect_pieces(ipath)
+                print(f"Detection completed! Result saved to: {args.output if args.output else 'output'}")

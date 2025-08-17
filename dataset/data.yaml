@@ -2,19 +2,20 @@ train: ./train/images
 val: ./valid/images
 test: ./test/images
 
-nc: 14
-names: 
-  - 'King_black'
-  - 'Advisor_black'
-  - 'Elephant_black'
-  - 'Chariot_black'
-  - 'Horse_black'
-  - 'Cannon_black'
-  - 'Soldier_black'
-  - 'King_red'
-  - 'Advisor_red'
-  - 'Elephant_red'
-  - 'Chariot_red'
-  - 'Horse_red'
-  - 'Cannon_red'
-  - 'Soldier_red'
+nc: 15
+names:
+  - "Black Advisor"
+  - "Black Cannon"
+  - "Black Chariot"
+  - "Black Elephant"
+  - "Black General"
+  - "Black Horse"
+  - "Black Soldier"
+  - "intersection"
+  - "Red Advisor"
+  - "Red Cannon"
+  - "Red Chariot"
+  - "Red Elephant"
+  - "Red General"
+  - "Red Horse"
+  - "Red Soldier"
