@@ -13,3 +13,6 @@
 /target/
 /scripts/coco/input/**
 /scripts/coco/output/**
+/scripts/augmented/input/**
+/scripts/augmented/output/**
+/scripts/gen_dataset/output/**

@@ -54,7 +54,7 @@ def get_version():
         return 0
 
 
-def train_model():
+def train_model(resume=False):
     version = get_version()
     model_size = f"{target_dir}/best.v{version}.pt" if version > 0 else f"{target_dir}/yolov12s.pt"
     print(f"===============Model size: {model_size}")
@@ -64,15 +64,15 @@ def train_model():
     # Cải thiện cấu hình training cho YOLOv12
     training_config = {
         'data': 'dataset/data.yaml',
-        'epochs': 100,  # Tăng từ 50 lên 100
+        'epochs': 200,
         'imgsz': 640,
         'batch': 16,
-        'patience': 25,  # Tăng patience
+        'patience': 25,
         'save': True,
         'save_period': 10,
         'cache': 'ram',
         'device': 'mps' if torch.backends.mps.is_available() else 'cpu',
-        'workers': 4,
+        'workers': 6,
         'project': 'runs/detect',
         'name': 'xiangqi_yolo12_model',
         'exist_ok': True,
@@ -85,7 +85,7 @@ def train_model():
         'rect': False,
         'cos_lr': True,
         'close_mosaic': 10,
-        'resume': False,
+        'resume': resume,
         'amp': True,  # Bật mixed precision
         'fraction': 1.0,
         'profile': False,
@@ -193,12 +193,14 @@ if __name__ == "__main__":
                         help='Image path for detection mode (required when mode=detect)')
     parser.add_argument('--output', '-o', type=str, default='output/result.jpg',
                         help='Output path for detection results (default: output/result.jpg)')
+    parser.add_argument('--resume', '-r', action='store_true',
+                        help='Resume training from the last checkpoint')
 
     args = parser.parse_args()
 
     if args.mode == 'train':
         print("Starting training mode...")
-        train_model()
+        train_model(args.resume)
         print("Training completed!")
 
     elif args.mode == 'detect':
@@ -207,16 +209,10 @@ if __name__ == "__main__":
             detect_pieces(args.image)
             print(f"Detection completed! Result saved to: {args.output}")
         else:
-            for ipath in [
-                "input/test1.png",
-                "input/test2.png",
-                "input/test3.jpg",
-                "input/test4.jpg",
-                "input/test5.jpg",
-                "input/test7.jpg",
-                "input/test9.jpg",
-                "input/test10.png"
-            ]:
-                print(f"Starting detection mode on image: {ipath}")
-                detect_pieces(ipath)
+            INPUT_DIR = base_dir / "input"
+            image_files = [f for f in os.listdir(INPUT_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            for img_filename in image_files:
+                img_path = INPUT_DIR / img_filename
+                print(f"Starting detection mode on image: {img_path}")
+                detect_pieces(img_path.as_posix())
                 print(f"Detection completed! Result saved to: {args.output if args.output else 'output'}")
