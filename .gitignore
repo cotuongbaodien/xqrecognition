@@ -7,8 +7,10 @@
 /dataset/test/images/*.jpg
 /dataset/valid/images/*.jpg
 /dataset/train/labels/**
+/dataset/train/preview/**
 /dataset/test/labels/**
 /dataset/valid/labels/**
+/dataset/valid/preview/**
 /runs/**
 /target/
 /scripts/coco/input/**
