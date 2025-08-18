@@ -185,10 +185,8 @@ def detect_pieces(image_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description='Chess AI Training and Detection Tool')
-    parser.add_argument('mode', choices=['train', 'detect'],
-                        help='Mode to run: train or detect')
+    parser = argparse.ArgumentParser(description='Chess AI Training and Detection Tool')
+    parser.add_argument('mode', choices=['train', 'detect'], help='Mode to run: train or detect')
     parser.add_argument('--image', '-i', type=str, default='',
                         help='Image path for detection mode (required when mode=detect)')
     parser.add_argument('--output', '-o', type=str, default='output/result.jpg',

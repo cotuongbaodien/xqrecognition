@@ -1,5 +1,7 @@
+import argparse
 import os
 from pathlib import Path
+import shutil
 
 import albumentations as A
 import cv2
@@ -9,7 +11,7 @@ root_dir = Path(__file__).parent.parent
 base_dir = root_dir / "scripts" / "augmented"
 INPUT_DIR = base_dir / "input"
 OUTPUT_DIR = base_dir / "output"
-AUGMENTATIONS_PER_IMAGE = 50
+AUGMENTATIONS_PER_IMAGE = 10
 
 
 transform = A.Compose(
@@ -28,11 +30,21 @@ transform = A.Compose(
     bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'])
 )
 
+def clear_output():
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
+    os.makedirs(OUTPUT_DIR)
+    os.makedirs(OUTPUT_DIR / "images")
+    os.makedirs(OUTPUT_DIR / "labels")
+
 
 def main():
-    os.makedirs(OUTPUT_DIR / "images", exist_ok=True)
-    os.makedirs(OUTPUT_DIR / "labels", exist_ok=True)
+    parser = argparse.ArgumentParser(description='Chess AI Training and Detection Tool')
+    parser.add_argument('size', type=int, default=AUGMENTATIONS_PER_IMAGE, help='Size of the image')
+    args = parser.parse_args()
+    size = args.size
     print(f"Starting to augment data from '{INPUT_DIR}' to '{OUTPUT_DIR}'...")
+    clear_output()
     image_files = [f for f in os.listdir(INPUT_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
     for img_filename in image_files:
         basename, _ = os.path.splitext(img_filename)
@@ -51,7 +63,7 @@ def main():
                 class_id, x_center, y_center, w, h = map(float, line.strip().split())
                 bboxes.append([x_center, y_center, w, h])
                 class_labels.append(int(class_id))
-        for i in range(AUGMENTATIONS_PER_IMAGE):
+        for i in range(size):
             try:
                 transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
                 transformed_image = transformed['image']
