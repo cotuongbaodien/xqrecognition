@@ -18,3 +18,21 @@
 /scripts/augmented/input/**
 /scripts/augmented/output/**
 /scripts/gen_dataset/output/**
+
+# Python virtual environment
+venv/
+venc/
+ENV/
+.env
+.venv
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
