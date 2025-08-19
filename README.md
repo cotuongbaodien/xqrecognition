@@ -119,7 +119,8 @@ The project includes scripts to generate synthetic training data:
 ```bash
 # Generate synthetic dataset
 cd scripts
-python gen_dataset.py
+# high requirements for input images for simulation
+python simulate_dataset.py
 
 # Split dataset into train/validation sets
 python split_dataset.py
@@ -152,9 +153,9 @@ The training script uses YOLOv12 with the following optimized settings:
 
 ```
 chess_ai/
-├── app.py                 # FastAPI application
-├── train.py              # Training and detection script
-├── requirements.txt      # Python dependencies
+├── app.py               # FastAPI application
+├── train.py             # Training and detection script
+├── requirements.txt     # Python dependencies
 ├── Dockerfile           # Docker configuration
 ├── dataset/             # Training dataset
 │   ├── data.yaml        # Dataset configuration
@@ -166,10 +167,12 @@ chess_ai/
 │   ├── augmented.py     # Data augmentation
 │   ├── split_dataset.py # Dataset splitting
 │   └── ...
-├── target/              # Trained models
+├── model
+|   └── best.pt          # after finish train, copy last version to here
+├── target/              # Trained models, auto update version e.g. best.v[X].pt
 ├── input/               # Input images for testing
 ├── output/              # Detection results
-└── runs/                # Training logs and outputs
+└── runs/                # Training logs and outputs of framework auto generate for each execute train script
 ```
 
 ## 📝 License
