@@ -23,7 +23,6 @@ def split_dataset(src_images, src_labels, dst, val_ratio=0.2, seed=42):
             if lbp.exists():
                 shutil.copy(lbp, lb_out/lbp.name)
             else:
-                # create empty label if missing
                 open(lb_out/(imgp.stem+".txt"), "w").close()
 
 

@@ -9,15 +9,16 @@ import numpy as np
 import cv2
 
 root_dir = Path(__file__).parent.parent
-base_dir = root_dir / "scripts" / "gen_dataset"
+base_dir = root_dir / "scripts" / "simulate"
 BOARD_IMG = base_dir / "pieces" / "board.jpg"
 PIECES_DIR = base_dir / "pieces"
 OUTPUT_DIR = base_dir / "output"
 NUM_TRAIN = 100
 NUM_VAL = 10
 NUM_TEST = 10
+
 CLASS_NAMES = {}
-with open(base_dir / "dataset" / "data.yaml", "r") as f:
+with open(root_dir / "dataset" / "data.yaml", "r") as f:
     data = yaml.load(f, Loader=yaml.FullLoader)
     CLASS_NAMES.update({i: name for i, name in enumerate(data["names"])})
 

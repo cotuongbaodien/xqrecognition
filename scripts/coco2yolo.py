@@ -4,7 +4,6 @@ from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
 
-# Đường dẫn
 root_dir = Path(__file__).parent.parent
 base_dir = root_dir / "scripts" / "coco"
 
@@ -25,15 +24,12 @@ for target in ["train", "valid", "test"]:
         ann_by_img.setdefault(ann["image_id"], []).append(ann)
     for image_id, anns in tqdm(ann_by_img.items()):
         img_file = image_info[image_id]["file_name"]
-        img_path = os.path.join(input_dir, img_file)
-
-        if not os.path.exists(img_path):
+        img_path = input_dir / img_file
+        if not img_path.exists():
             continue
-
         img = Image.open(img_path)
         w, h = img.size
-
-        label_path = os.path.join(labels_dir, img_file.replace(".jpg", ".txt"))
+        label_path = labels_dir / (img_file.replace(".jpg", ".txt"))
         with open(label_path, "w") as f:
             for ann in anns:
                 cat_id = ann["category_id"]
@@ -45,7 +41,7 @@ for target in ["train", "valid", "test"]:
                 bh /= h
                 f.write(f"{class_id - 1} {x_c} {y_c} {bw} {bh}\n")
         
-        new_img_path = os.path.join(images_dir, img_file)
+        new_img_path = images_dir / img_file
         img.save(new_img_path)
         os.remove(img_path)
 
