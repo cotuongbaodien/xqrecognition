@@ -21,9 +21,9 @@ else:
 
 
 base_dir = Path(__file__).parent
-target_dir = f"{base_dir}/target"
+target_dir = base_dir / "target"
 CLASS_NAMES = {}
-with open(f"{base_dir}/dataset/data.yaml", "r") as f:
+with open(base_dir / "dataset" / "data.yaml", "r") as f:
     data = yaml.load(f, Loader=yaml.FullLoader)
     CLASS_NAMES.update({i: name for i, name in enumerate(data["names"])})
 
@@ -61,7 +61,6 @@ def train_model(resume=False):
     model = YOLO(model_size)
     model.info()
     
-    # Cải thiện cấu hình training cho YOLOv12
     training_config = {
         'data': 'dataset/data.yaml',
         'epochs': 200,
@@ -86,14 +85,13 @@ def train_model(resume=False):
         'cos_lr': True,
         'close_mosaic': 10,
         'resume': resume,
-        'amp': True,  # Bật mixed precision
+        'amp': True,
         'fraction': 1.0,
         'profile': False,
         'overlap_mask': True,
         'mask_ratio': 4,
-        'dropout': 0.1,  # Tăng dropout
+        'dropout': 0.1,
         'val': True,
-        # Thêm các hyperparameters mới cho YOLOv12
         'lr0': 0.01,
         'lrf': 0.01,
         'momentum': 0.937,
@@ -134,7 +132,7 @@ def train_model(resume=False):
 def detect_pieces(image_path):
     image = cv2.imread(image_path)
     if image is None:
-        print("Không thể đọc ảnh!")
+        print("Cannot read image!")
         return
     version = get_version()
     model_size = f"{target_dir}/best.v{version}.pt" if version > 0 else f"{target_dir}/yolov12s.pt"

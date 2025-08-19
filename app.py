@@ -8,7 +8,7 @@ from PIL import Image
 import io
 
 app = FastAPI(title="Chinese Chess Detector API")
-model = YOLO("target/best.v8.pt")
+model = YOLO("model/best.pt")
 
 
 def board_count(contours):
