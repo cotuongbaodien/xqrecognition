@@ -1,10 +1,12 @@
 # Auto-Learn Pipeline - Solution Chi Tiết
 
-> **TRẠNG THÁI:** Chuẩn bị data
+> **TRẠNG THÁI:** Chờ FEN data (848 images đã có)
 >
 > **TRAINING METHOD:** Fine-tune từ `pieces_det.pt`
 >
 > **PIPELINE:** Approach 1 → Approach 2 (theo thứ tự)
+>
+> **NEXT:** Khi FEN xong → nói "chạy đi" → Claude sẽ tự động chạy pipeline
 
 ---
 
