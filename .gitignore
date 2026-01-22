@@ -1,5 +1,8 @@
+# Input/Output directories
 /input/**
 /output/**
+
+# Dataset caches
 /dataset/train/labels.cache
 /dataset/test/labels.cache
 /dataset/valid/labels.cache
@@ -11,10 +14,44 @@
 /dataset/test/labels/**
 /dataset/valid/labels/**
 /dataset/valid/preview/**
+
+# Training outputs
 /runs/**
 /target/
+
+# Script outputs
 /scripts/coco/input/**
 /scripts/coco/output/**
 /scripts/augmented/input/**
 /scripts/augmented/output/**
 /scripts/gen_dataset/output/**
+
+# New project structure
+/data/board_seg/**
+/data/pieces/**
+/download/**
+/backup/**
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Models (large files)
+*.pt
+*.pth
+*.onnx
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

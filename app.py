@@ -1,116 +1,267 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
-from ultralytics import YOLO
-import uvicorn
-import numpy as np
-import cv2
-from PIL import Image
+"""
+FastAPI web service for Xiangqi Recognition System.
+Provides REST API for detecting chess pieces and generating FEN notation.
+"""
+
 import io
+import sys
+from pathlib import Path
+from typing import Optional
 
-app = FastAPI(title="Chinese Chess Detector API")
-model = YOLO("model/best.pt")
+import cv2
+import numpy as np
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
+# Add project root to path
+PROJECT_ROOT = Path(__file__).parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-def board_count(contours):
-    for cnt in contours:
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.02*peri, True)
-        if len(approx) == 4:
-            return approx
-    return None
-
-
-def detect_and_warp_board(image_bgr, dst_size=(900, 1000)):
-    """
-    Input: BGR image (numpy)
-    Output: warped image (dst_size), M (homography), corners (src)
-    Strategy:
-      - Convert to gray, threshold/edge, find largest quadrilateral contour -> assume board
-      - If fail, fallback: return None
-    """
-    h, w = image_bgr.shape[:2]
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    edges = cv2.Canny(th, 50, 150)
-    contours, _ = cv2.findContours(
-        edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None, None, None
-
-    board_cnt = board_count(sorted(contours, key=cv2.contourArea, reverse=True))
-    if board_cnt is None:
-        cnt = contours[0]
-        x, y, wc, hc = cv2.boundingRect(cnt)
-        src = np.array([[x, y], [x+wc, y], [x+wc, y+hc],[x, y+hc]], dtype="float32")
-    else:
-        src = board_cnt.reshape(4, 2).astype("float32")
-
-    def order_pts(pts):
-        s = pts.sum(axis=1)
-        diff = np.diff(pts, axis=1)
-        tl = pts[np.argmin(s)]
-        br = pts[np.argmax(s)]
-        tr = pts[np.argmin(diff)]
-        bl = pts[np.argmax(diff)]
-        return np.array([tl, tr, br, bl], dtype="float32")
-    src = order_pts(src)
-    dst = np.array([[0, 0], [dst_size[0]-1, 0], [dst_size[0]-1,
-                   dst_size[1]-1], [0, dst_size[1]-1]], dtype="float32")
-    M = cv2.getPerspectiveTransform(src, dst)
-    warped = cv2.warpPerspective(image_bgr, M, dst_size)
-    return warped, M, src
+from config.settings import BOARD_SEG_MODEL, PIECES_DET_MODEL
+from src.pipeline import XiangqiRecognizer
 
 
-def map_point_to_cell(point, dst_size=(900, 1000), cols=9, rows=10):
-    x, y = point
-    cell_w = dst_size[0]/cols
-    cell_h = dst_size[1]/rows
-    col = int(x // cell_w)
-    row = int(y // cell_h)
-    col = max(0, min(cols-1, col))
-    row = max(0, min(rows-1, row))
-    cell_name = f"c{col}_r{row}"
-    return {"col": col, "row": row, "cell_name": cell_name}
+# Initialize FastAPI app
+app = FastAPI(
+    title="Xiangqi Recognition API",
+    description="API for detecting Xiangqi (Chinese Chess) pieces and generating FEN notation",
+    version="1.0.0",
+)
+
+# Global recognizer instance
+recognizer: Optional[XiangqiRecognizer] = None
 
 
-@app.post("/detect")
+class DetectionResponse(BaseModel):
+    """Response model for detection endpoint."""
+    fen: str
+    pieces: list
+    piece_count: int
+    confidence: float
+    errors: list
+
+
+class HealthResponse(BaseModel):
+    """Response model for health check."""
+    status: str
+    board_model_loaded: bool
+    pieces_model_loaded: bool
+
+
+def get_recognizer() -> XiangqiRecognizer:
+    """Get or initialize the recognizer instance."""
+    global recognizer
+    if recognizer is None:
+        use_board = BOARD_SEG_MODEL.exists()
+        recognizer = XiangqiRecognizer(
+            board_model_path=str(BOARD_SEG_MODEL) if use_board else None,
+            pieces_model_path=str(PIECES_DET_MODEL),
+            use_board_detection=use_board,
+        )
+    return recognizer
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize models on startup."""
+    print("Initializing Xiangqi Recognition System...")
+    try:
+        get_recognizer()
+        print("System initialized successfully")
+    except Exception as e:
+        print(f"Warning: Could not initialize recognizer: {e}")
+
+
+@app.get("/", response_model=dict)
+async def root():
+    """Root endpoint with API information."""
+    return {
+        "name": "Xiangqi Recognition API",
+        "version": "1.0.0",
+        "endpoints": {
+            "/detect": "POST - Detect pieces and generate FEN from image",
+            "/detect/visualize": "POST - Detect pieces and return visualization",
+            "/health": "GET - Health check",
+            "/docs": "GET - API documentation",
+        },
+    }
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint."""
+    rec = get_recognizer()
+    return HealthResponse(
+        status="healthy",
+        board_model_loaded=rec.board_detector.model is not None,
+        pieces_model_loaded=rec.piece_detector.model is not None,
+    )
+
+
+@app.post("/detect", response_model=DetectionResponse)
 async def detect(file: UploadFile = File(...)):
-    img_bytes = await file.read()
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    np_img = np.array(img)[:, :, ::-1].copy()
-    _, M, _ = detect_and_warp_board(np_img, dst_size=(900, 1000))
-    results = model(np_img, imgsz=640)[0]
-    out = []
-    Minv = None
-    if M is not None:
-        Minv = np.linalg.inv(M)
+    """
+    Detect chess pieces and generate FEN notation from an image.
 
-    for box in results.boxes:
-        x1, y1, x2, y2 = map(float, box.xyxy[0])
-        conf = float(box.conf[0])
-        cls = int(box.cls[0])
-        name = model.names[cls]
-        cx = (x1 + x2)/2
-        cy = (y1 + y2)/2
-        cell = None
-        if Minv is not None:
-            pt = np.array([[cx, cy, 1.0]]).T
-            warped_pt = M.dot(pt)
-            warped_pt = warped_pt / warped_pt[2]
-            wx, wy = float(warped_pt[0]), float(warped_pt[1])
-            cell = map_point_to_cell((wx, wy), dst_size=(900, 1000), cols=9, rows=10)
-        
-        out.append({
-            "name": name,
-            "confidence": round(conf, 3),
-            "bbox": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
-            "center": [round(cx, 2), round(cy, 2)],
-            "cell": cell
+    Args:
+        file: Uploaded image file (JPEG, PNG, etc.)
+
+    Returns:
+        DetectionResponse with FEN string and detected pieces.
+    """
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be an image (JPEG, PNG, etc.)"
+        )
+
+    try:
+        # Read image file
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            raise HTTPException(status_code=400, detail="Could not decode image")
+
+        # Run recognition
+        rec = get_recognizer()
+        result = rec.recognize_image(image)
+
+        return DetectionResponse(
+            fen=result.fen,
+            pieces=[p.to_dict() for p in result.pieces],
+            piece_count=len(result.pieces),
+            confidence=result.confidence,
+            errors=result.errors,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/detect/visualize")
+async def detect_visualize(file: UploadFile = File(...)):
+    """
+    Detect chess pieces and return visualization image.
+
+    Args:
+        file: Uploaded image file (JPEG, PNG, etc.)
+
+    Returns:
+        PNG image with detection visualization.
+    """
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be an image (JPEG, PNG, etc.)"
+        )
+
+    try:
+        # Read image file
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            raise HTTPException(status_code=400, detail="Could not decode image")
+
+        # Run recognition with visualization
+        rec = get_recognizer()
+        result = rec.recognize_image(image, visualize=True)
+
+        if result.visualization is None:
+            raise HTTPException(status_code=500, detail="Could not create visualization")
+
+        # Encode visualization as PNG
+        _, encoded = cv2.imencode(".png", result.visualization)
+        return StreamingResponse(
+            io.BytesIO(encoded.tobytes()),
+            media_type="image/png",
+            headers={
+                "X-FEN": result.fen,
+                "X-Piece-Count": str(len(result.pieces)),
+                "X-Confidence": f"{result.confidence:.4f}",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/detect/json-with-image")
+async def detect_json_with_image(file: UploadFile = File(...)):
+    """
+    Detect chess pieces and return both JSON data and base64-encoded visualization.
+
+    Args:
+        file: Uploaded image file (JPEG, PNG, etc.)
+
+    Returns:
+        JSON with detection results and base64 visualization image.
+    """
+    import base64
+
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be an image (JPEG, PNG, etc.)"
+        )
+
+    try:
+        # Read image file
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if image is None:
+            raise HTTPException(status_code=400, detail="Could not decode image")
+
+        # Run recognition with visualization
+        rec = get_recognizer()
+        result = rec.recognize_image(image, visualize=True)
+
+        # Encode visualization as base64
+        visualization_b64 = None
+        if result.visualization is not None:
+            _, encoded = cv2.imencode(".png", result.visualization)
+            visualization_b64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+        return JSONResponse({
+            "fen": result.fen,
+            "pieces": [p.to_dict() for p in result.pieces],
+            "piece_count": len(result.pieces),
+            "confidence": result.confidence,
+            "errors": result.errors,
+            "visualization": visualization_b64,
         })
 
-    return JSONResponse({"pieces": out})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def run_server(host: str = "0.0.0.0", port: int = 8000):
+    """Run the FastAPI server."""
+    import uvicorn
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run Xiangqi Recognition API server")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+
+    args = parser.parse_args()
+    run_server(host=args.host, port=args.port)

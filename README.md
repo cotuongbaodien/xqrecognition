@@ -1,191 +1,309 @@
-# Chinese Chess (Xiangqi) AI Detector
+# Xiangqi Recognition System
 
-A computer vision system that detects and identifies Chinese chess pieces on a board using YOLO (You Only Look Once) object detection. This project includes a FastAPI web service for real-time piece detection and a comprehensive training pipeline.
+Hệ thống nhận diện bàn cờ tướng (Xiangqi/Chinese Chess) từ ảnh sử dụng Computer Vision và Deep Learning, xuất ra FEN notation.
 
-##  Features
+A computer vision system for recognizing Xiangqi (Chinese Chess) board positions from images and generating FEN (Forsyth-Edwards Notation) strings.
 
-- **Real-time Chinese Chess Piece Detection**: Detects all 14 types of Chinese chess pieces (7 red + 7 black pieces)
-- **Board Perspective Correction**: Automatically detects and warps the chess board to a standard perspective
-- **Cell Mapping**: Maps detected pieces to their corresponding board positions (9x10 grid)
-- **RESTful API**: FastAPI-based web service for easy integration
-- **Docker Support**: Containerized deployment ready
-- **Comprehensive Training Pipeline**: Complete dataset generation and model training workflow
+## Features
 
-## ️ Architecture
+- **Board Detection**: Nhận diện grid 9x10 của bàn cờ sử dụng YOLOv8-Segmentation
+- **Piece Detection**: Nhận diện và phân loại 14 loại quân cờ sử dụng YOLOv8
+- **FEN Generation**: Chuyển đổi trạng thái bàn cờ thành FEN notation chuẩn
+- **REST API**: FastAPI web service để tích hợp dễ dàng
+- **CLI Tools**: Command-line interfaces cho training và detection
 
-### Core Components
+## Documentation / Tài Liệu
 
-- **YOLO Model**: Uses Ultralytics YOLO for piece detection
-- **Board Detection**: OpenCV-based board contour detection and perspective transformation
-- **API Service**: FastAPI server with automatic OpenAPI documentation
-- **Training Pipeline**: Custom dataset generation and model training scripts
+| Document | Mô tả |
+|----------|-------|
+| [USAGE.md](docs/USAGE.md) | Hướng dẫn sử dụng chi tiết (Tiếng Việt) |
+| [ACCURACY_ANALYSIS.md](docs/ACCURACY_ANALYSIS.md) | Phân tích độ chính xác & giải pháp cải thiện |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiến trúc hệ thống chi tiết |
 
-### Supported Piece Types
+## Quick Start
 
-| Piece | Red | Black | Display Symbol |
-|-------|-----|-------|----------------|
-| General | 将 | 帅 | V |
-| Advisor | 士 | 仕 | S |
-| Elephant | 象 | 相 | T |
-| Horse | 马 | 马 | M |
-| Chariot | 车 | 车 | X |
-| Cannon | 炮 | 炮 | P |
-| Soldier | 兵 | 卒 | C |
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.8+
-- CUDA-compatible GPU (optional, for faster training)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd chess_ai
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Run the API server**
-   ```bash
-   python app.py
-   ```
-
-The API will be available at `http://localhost:8000`
-
-### Using Docker
+### 1. Installation
 
 ```bash
-# Build the Docker image
-docker build -t chess-ai .
+# Clone repository
+git clone <repository-url>
+cd xqrecognition
 
-# Run the container
-docker run -p 8000:8000 chess-ai
+# Create virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# hoặc: venv\Scripts\activate  # Windows
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-## 📖 API Documentation
+### 2. Setup Datasets
 
-### Endpoint: `POST /detect`
+```bash
+# Extract datasets from zip files
+python train.py setup
+```
 
-Detects Chinese chess pieces in an uploaded image.
+### 3. Train Models
 
-**Request:**
-- Method: `POST`
-- Content-Type: `multipart/form-data`
-- Body: Image file
+```bash
+# Train pieces detection model
+python train.py pieces --epochs 100
 
-**Response:**
+# Train board segmentation model (optional)
+python train.py board --epochs 100
+```
+
+### 4. Run Detection
+
+```bash
+# Detect from image
+python detect.py --image board.jpg --output output/
+
+# Start API server
+python app.py
+```
+
+## System Architecture
+
+```
+Input Image
+    │
+    ▼
+┌─────────────────────────────┐
+│   Board Detection           │  YOLOv8-Seg → 90 intersection points
+│   (Optional)                │  → Build 9x10 grid
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────┐
+│   Piece Detection           │  YOLOv8 → Detect 14 piece classes
+│   (Required)                │  → Bounding boxes + classes
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────┐
+│   Grid Mapping              │  Map pieces to grid positions
+│                             │  → 10x9 board matrix
+└─────────────┬───────────────┘
+              │
+              ▼
+┌─────────────────────────────┐
+│   FEN Generation            │  Convert to FEN string
+└─────────────┬───────────────┘
+              │
+              ▼
+Output: "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR"
+```
+
+## Usage
+
+### CLI Detection
+
+```bash
+# Single image
+python detect.py --image board.jpg
+
+# Directory of images
+python detect.py --dir images/ --output results/
+
+# With custom confidence threshold
+python detect.py --image board.jpg --confidence 0.3
+
+# Without board detection (faster, uses interpolation)
+python detect.py --image board.jpg --no-board
+```
+
+### CLI Training
+
+```bash
+# Train pieces model
+python train.py pieces --epochs 100 --batch-size 16
+
+# Train board model
+python train.py board --epochs 100 --batch-size 8
+
+# Train both
+python train.py all --epochs 100
+
+# Resume training
+python train.py pieces --resume
+```
+
+### API Server
+
+```bash
+# Start server
+python app.py --host 0.0.0.0 --port 8000
+```
+
+**API Endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | API information |
+| `/health` | GET | Health check |
+| `/detect` | POST | Detect and return JSON |
+| `/detect/visualize` | POST | Return visualization image |
+| `/docs` | GET | Swagger documentation |
+
+**Example API Call:**
+
+```bash
+curl -X POST "http://localhost:8000/detect" \
+  -F "file=@board.jpg"
+```
+
 ```json
 {
-  "pieces": [
-    {
-      "name": "Red General",
-      "confidence": 0.95,
-      "bbox": [100, 150, 200, 250],
-      "center": [150, 200],
-      "cell": {
-        "col": 4,
-        "row": 0,
-        "cell_name": "c4_r0"
-      }
-    }
-  ]
+  "fen": "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR",
+  "pieces": [...],
+  "piece_count": 32,
+  "confidence": 0.95
 }
 ```
 
-**Response Fields:**
-- `name`: Piece type and color
-- `confidence`: Detection confidence (0-1)
-- `bbox`: Bounding box coordinates [x1, y1, x2, y2]
-- `center`: Center point coordinates [x, y]
-- `cell`: Board position mapping (9x10 grid)
+### Python API
 
-### Interactive API Documentation
+```python
+from src.pipeline import XiangqiRecognizer
 
-Visit `http://localhost:8000/docs` for interactive API documentation powered by Swagger UI.
+# Initialize
+recognizer = XiangqiRecognizer(
+    pieces_model_path="models/pieces_det.pt",
+    use_board_detection=True
+)
 
-## 🎓 Training Your Own Model
+# Recognize
+result = recognizer.recognize("board.jpg", visualize=True)
 
-### 1. Dataset Generation
+print(f"FEN: {result.fen}")
+print(f"Pieces: {len(result.pieces)}")
+print(f"Confidence: {result.confidence:.2%}")
+```
 
-The project includes scripts to generate synthetic training data:
+## Project Structure
+
+```
+xqrecognition/
+├── config/
+│   └── settings.py          # Configuration constants
+├── src/
+│   ├── board_detector.py    # Board grid detection
+│   ├── piece_detector.py    # Chess piece detection
+│   ├── fen_generator.py     # FEN generation
+│   └── pipeline.py          # Main pipeline
+├── scripts/
+│   ├── setup_data.py        # Dataset extraction
+│   ├── train_board.py       # Board model training
+│   ├── train_pieces.py      # Pieces model training
+│   └── evaluate.py          # Evaluation
+├── docs/
+│   ├── USAGE.md             # Usage guide
+│   ├── ACCURACY_ANALYSIS.md # Accuracy analysis
+│   └── ARCHITECTURE.md      # System architecture
+├── models/                   # Trained models
+├── data/                     # Datasets
+├── app.py                   # FastAPI server
+├── train.py                 # Training CLI
+├── detect.py                # Detection CLI
+├── requirements.txt
+├── Dockerfile
+└── README.md
+```
+
+## Chess Pieces (14 Classes)
+
+| ID | Name | Tiếng Việt | FEN |
+|----|------|------------|-----|
+| 0 | Advisor_black | Sĩ đen | a |
+| 1 | Advisor_red | Sĩ đỏ | A |
+| 2 | Cannon_black | Pháo đen | c |
+| 3 | Cannon_red | Pháo đỏ | C |
+| 4 | Elephant_black | Tượng đen | b |
+| 5 | Elephant_red | Tượng đỏ | B |
+| 6 | General_black | Tướng đen | k |
+| 7 | General_red | Tướng đỏ | K |
+| 8 | Knight_black | Mã đen | n |
+| 9 | Knight_red | Mã đỏ | N |
+| 10 | Pawn_black | Tốt đen | p |
+| 11 | Pawn_red | Tốt đỏ | P |
+| 12 | Rook_black | Xe đen | r |
+| 13 | Rook_red | Xe đỏ | R |
+
+## FEN Notation
+
+**Standard starting position:**
+```
+rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR
+```
+
+- Row 0 (top): Black's back rank
+- Row 9 (bottom): Red's back rank
+- `/` separates rows
+- Numbers = consecutive empty squares
+- Uppercase = Red, lowercase = Black
+
+## Accuracy & Improvement
+
+Xem chi tiết tại [ACCURACY_ANALYSIS.md](docs/ACCURACY_ANALYSIS.md)
+
+### Expected Accuracy
+
+| Stage | Target Accuracy |
+|-------|-----------------|
+| Piece Detection (mAP@50) | 90-95% |
+| FEN Exact Match | 75-85% |
+| Piece Position Accuracy | 95-98% |
+
+### Key Improvement Strategies
+
+1. **Data Augmentation**: Rotation, perspective, lighting variations
+2. **Game Rules Validation**: Filter invalid positions
+3. **Ensemble Models**: Combine multiple YOLO models
+4. **Hybrid Board Detection**: ML + Traditional CV
+
+## Docker
 
 ```bash
-# Generate synthetic dataset
-cd scripts
-python gen_dataset.py
+# Build
+docker build -t xqrecognition .
 
-# Split dataset into train/validation sets
-python split_dataset.py
+# Run
+docker run -p 8000:8000 xqrecognition
 ```
 
-### 2. Model Training
+## Evaluation
 
 ```bash
-# Train a new model
-python train.py train
+# Evaluate pieces model
+python scripts/evaluate.py pieces --split test
 
-# Resume training from checkpoint
-python train.py train --resume
-
-# Test detection on an image
-python train.py detect --image path/to/image.jpg
+# Evaluate full pipeline
+python scripts/evaluate.py pipeline \
+  --test-dir test_images/ \
+  --ground-truth ground_truth.json \
+  --output results.json
 ```
 
-### Training Configuration
+## Requirements
 
-The training script uses YOLOv12 with the following optimized settings:
-- **Epochs**: 200
-- **Batch Size**: 16
-- **Image Size**: 640x640
-- **Optimizer**: Auto (AdamW)
-- **Learning Rate**: 0.01 with cosine annealing
-- **Data Augmentation**: Mosaic, mixup, HSV adjustments
+- Python 3.8+
+- PyTorch 2.0+
+- Ultralytics YOLOv8
+- OpenCV
+- FastAPI
+- CUDA (optional, for GPU acceleration)
 
-## 📁 Project Structure
+## License
 
-```
-chess_ai/
-├── app.py                 # FastAPI application
-├── train.py              # Training and detection script
-├── requirements.txt      # Python dependencies
-├── Dockerfile           # Docker configuration
-├── dataset/             # Training dataset
-│   ├── data.yaml        # Dataset configuration
-│   ├── train/           # Training images and labels
-│   ├── valid/           # Validation images and labels
-│   └── test/            # Test images and labels
-├── scripts/             # Utility scripts
-│   ├── gen_dataset.py   # Dataset generation
-│   ├── augmented.py     # Data augmentation
-│   ├── split_dataset.py # Dataset splitting
-│   └── ...
-├── target/              # Trained models
-├── input/               # Input images for testing
-├── output/              # Detection results
-└── runs/                # Training logs and outputs
-```
+MIT License
 
-## 📝 License
+## Contributing
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-##  Acknowledgments
-
-- [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) for the object detection framework
-- [FastAPI](https://fastapi.tiangolo.com/) for the web framework
-- [OpenCV](https://opencv.org/) for computer vision operations
-
-## 📞 Support
-
-For questions and support, please open an issue on GitHub or contact the maintainers.
-
----
-
-**Note**: This project is designed for Chinese Chess (Xiangqi) detection. For Western Chess, you would need to modify the piece classes and board dimensions accordingly.
+1. Fork the repository
+2. Create feature branch
+3. Commit changes
+4. Push to branch
+5. Create Pull Request
