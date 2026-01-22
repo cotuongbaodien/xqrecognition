@@ -1,6 +1,6 @@
 """
 Board detection module for Xiangqi Recognition System.
-Detects intersection points on the board and constructs the 9x10 grid.
+Detects board bounding box and constructs the 9x10 grid.
 """
 
 from dataclasses import dataclass
@@ -75,17 +75,11 @@ class Grid:
 
 class BoardDetector:
     """
-    Detects the Xiangqi board and constructs the grid.
-    Uses YOLOv8-seg model to detect intersection points.
+    Detects the Xiangqi board using YOLOv8-seg model.
+    Used as a fallback when BoardBoxDetector fails.
     """
 
     def __init__(self, model_path: str = None):
-        """
-        Initialize the BoardDetector.
-
-        Args:
-            model_path: Path to the trained YOLOv8-seg model.
-        """
         self.model = None
         self.model_path = model_path
         if model_path:
@@ -114,19 +108,15 @@ class BoardDetector:
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        # Run inference
         results = self.model(image, conf=confidence, verbose=False)
-
         points = []
 
         for result in results:
             if result.masks is None:
                 continue
 
-            # Extract mask polygons and compute centroids
             for mask in result.masks.xy:
                 if len(mask) > 0:
-                    # Calculate centroid of the polygon
                     centroid_x = np.mean(mask[:, 0])
                     centroid_y = np.mean(mask[:, 1])
                     points.append(Point(centroid_x, centroid_y))
@@ -137,11 +127,6 @@ class BoardDetector:
         """
         Build the 9x10 grid from detected intersection points.
 
-        Algorithm:
-        1. Sort points by y-coordinate to group into rows
-        2. Within each row, sort by x-coordinate
-        3. Verify we have exactly 90 points (9x10)
-
         Args:
             intersections: List of detected intersection points.
 
@@ -151,16 +136,10 @@ class BoardDetector:
         if len(intersections) < TOTAL_INTERSECTIONS:
             print(f"Warning: Only {len(intersections)} intersections detected, expected {TOTAL_INTERSECTIONS}")
 
-        # Convert to numpy array for easier processing
         points_array = np.array([[p.x, p.y] for p in intersections])
-
-        # Sort by y-coordinate first (top to bottom)
         sorted_by_y = points_array[points_array[:, 1].argsort()]
 
-        # Group into rows using clustering
         grid_points = np.zeros((GRID_ROWS, GRID_COLS, 2))
-
-        # Use k-means-like clustering to group points into rows
         points_per_row = len(sorted_by_y) // GRID_ROWS
         row_points = []
 
@@ -168,27 +147,20 @@ class BoardDetector:
             start_idx = i * points_per_row
             end_idx = start_idx + points_per_row if i < GRID_ROWS - 1 else len(sorted_by_y)
 
-            # Get points for this row
             row = sorted_by_y[start_idx:end_idx]
-
-            # Sort by x-coordinate (left to right)
             row = row[row[:, 0].argsort()]
 
-            # Take exactly GRID_COLS points
             if len(row) >= GRID_COLS:
                 row = row[:GRID_COLS]
             else:
-                # Pad with interpolated points if needed
                 row = self._interpolate_row(row, GRID_COLS)
 
             row_points.append(row)
 
-        # Build grid array
         for row_idx, row in enumerate(row_points):
             for col_idx in range(min(len(row), GRID_COLS)):
                 grid_points[row_idx, col_idx] = row[col_idx]
 
-        # Calculate average cell dimensions
         cell_widths = []
         cell_heights = []
 
@@ -217,149 +189,49 @@ class BoardDetector:
         if len(row) == 1:
             return np.tile(row, (target_cols, 1))
 
-        # Simple linear interpolation
         x_vals = np.linspace(row[0, 0], row[-1, 0], target_cols)
         y_vals = np.interp(x_vals, row[:, 0], row[:, 1])
 
         return np.column_stack([x_vals, y_vals])
 
-    def build_grid_from_corners(
+    def build_grid_from_bbox(
         self,
-        corners: List[Point],
-        image_shape: Tuple[int, int]
+        bbox: Tuple[float, float, float, float],
+        margin: float = 0.0
     ) -> Grid:
         """
-        Build grid from four corner points using perspective transformation.
-        This is a fallback method when intersection detection doesn't work well.
+        Build grid from board bounding box.
 
         Args:
-            corners: Four corner points [top-left, top-right, bottom-right, bottom-left]
-            image_shape: (height, width) of the image
+            bbox: Bounding box (x1, y1, x2, y2) of the board.
+            margin: Optional margin to shrink the bbox (as fraction of size).
 
         Returns:
-            Grid object
+            Grid object with calculated intersection points.
         """
-        # Sort corners: top-left, top-right, bottom-right, bottom-left
-        corners_array = np.array([[p.x, p.y] for p in corners], dtype=np.float32)
+        x1, y1, x2, y2 = bbox
 
-        # Compute grid points by interpolation
+        if margin > 0:
+            w, h = x2 - x1, y2 - y1
+            x1 += w * margin
+            y1 += h * margin
+            x2 -= w * margin
+            y2 -= h * margin
+
+        board_width = x2 - x1
+        board_height = y2 - y1
+
+        cell_width = board_width / (GRID_COLS - 1)
+        cell_height = board_height / (GRID_ROWS - 1)
+
         grid_points = np.zeros((GRID_ROWS, GRID_COLS, 2))
 
         for row in range(GRID_ROWS):
             for col in range(GRID_COLS):
-                # Bilinear interpolation
-                u = col / (GRID_COLS - 1)
-                v = row / (GRID_ROWS - 1)
-
-                # Interpolate along top and bottom edges
-                top = corners_array[0] * (1 - u) + corners_array[1] * u
-                bottom = corners_array[3] * (1 - u) + corners_array[2] * u
-
-                # Interpolate between top and bottom
-                point = top * (1 - v) + bottom * v
-                grid_points[row, col] = point
-
-        # Calculate cell dimensions
-        cell_width = np.mean([
-            grid_points[0, 1, 0] - grid_points[0, 0, 0],
-            grid_points[-1, 1, 0] - grid_points[-1, 0, 0]
-        ])
-        cell_height = np.mean([
-            grid_points[1, 0, 1] - grid_points[0, 0, 1],
-            grid_points[1, -1, 1] - grid_points[0, -1, 1]
-        ])
+                grid_points[row, col, 0] = x1 + col * cell_width
+                grid_points[row, col, 1] = y1 + row * cell_height
 
         return Grid(points=grid_points, cell_width=cell_width, cell_height=cell_height)
-
-    def detect_board_corners(self, image: np.ndarray) -> Optional[List[Point]]:
-        """
-        Detect the four corners of the board using traditional CV methods.
-        This is a fallback method.
-
-        Args:
-            image: Input image as numpy array (BGR).
-
-        Returns:
-            List of four corner points, or None if detection fails.
-        """
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-        # Apply Gaussian blur
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        # Edge detection
-        edges = cv2.Canny(blurred, 50, 150)
-
-        # Find contours
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if not contours:
-            return None
-
-        # Find the largest quadrilateral contour
-        max_area = 0
-        best_approx = None
-
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < 1000:  # Skip small contours
-                continue
-
-            # Approximate contour to polygon
-            peri = cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-
-            # Check if it's a quadrilateral
-            if len(approx) == 4 and area > max_area:
-                max_area = area
-                best_approx = approx
-
-        if best_approx is None:
-            return None
-
-        # Convert to Point objects
-        corners = [Point(float(p[0][0]), float(p[0][1])) for p in best_approx]
-
-        # Sort corners: top-left, top-right, bottom-right, bottom-left
-        corners = self._sort_corners(corners)
-
-        return corners
-
-    def _sort_corners(self, corners: List[Point]) -> List[Point]:
-        """Sort corners in order: top-left, top-right, bottom-right, bottom-left."""
-        # Calculate centroid
-        cx = sum(p.x for p in corners) / 4
-        cy = sum(p.y for p in corners) / 4
-
-        # Classify corners based on position relative to centroid
-        top_left = None
-        top_right = None
-        bottom_left = None
-        bottom_right = None
-
-        for p in corners:
-            if p.x < cx and p.y < cy:
-                top_left = p
-            elif p.x >= cx and p.y < cy:
-                top_right = p
-            elif p.x < cx and p.y >= cy:
-                bottom_left = p
-            else:
-                bottom_right = p
-
-        # Handle edge cases where corners might be on the same side
-        if None in [top_left, top_right, bottom_left, bottom_right]:
-            # Fallback: sort by sum and difference of coordinates
-            sorted_corners = sorted(corners, key=lambda p: p.x + p.y)
-            top_left = sorted_corners[0]
-            bottom_right = sorted_corners[3]
-
-            sorted_corners = sorted(corners, key=lambda p: p.x - p.y)
-            top_right = sorted_corners[3]
-            bottom_left = sorted_corners[0]
-
-        return [top_left, top_right, bottom_right, bottom_left]
 
     def visualize_grid(
         self,
@@ -368,18 +240,7 @@ class BoardDetector:
         color: Tuple[int, int, int] = (0, 255, 0),
         thickness: int = 1
     ) -> np.ndarray:
-        """
-        Draw the grid on the image.
-
-        Args:
-            image: Input image as numpy array (BGR).
-            grid: Grid object to visualize.
-            color: Line color in BGR format.
-            thickness: Line thickness.
-
-        Returns:
-            Image with grid drawn.
-        """
+        """Draw the grid on the image."""
         result = image.copy()
 
         # Draw horizontal lines
@@ -403,3 +264,82 @@ class BoardDetector:
                 cv2.circle(result, pt, 3, (0, 0, 255), -1)
 
         return result
+
+
+class BoardBoxDetector:
+    """
+    Detects the Xiangqi board bounding box using YOLOv8 detection model.
+    Primary method for board detection.
+    """
+
+    def __init__(self, model_path: str = None):
+        self.model = None
+        self.model_path = model_path
+        if model_path:
+            self.load_model(model_path)
+
+    def load_model(self, model_path: str):
+        """Load the YOLOv8 detection model."""
+        self.model = YOLO(model_path)
+        self.model_path = model_path
+
+    def detect_board(
+        self,
+        image: np.ndarray,
+        confidence: float = BOARD_CONFIDENCE_THRESHOLD
+    ) -> Optional[Tuple[float, float, float, float]]:
+        """
+        Detect the board bounding box in the image.
+
+        Args:
+            image: Input image as numpy array (BGR).
+            confidence: Minimum confidence threshold.
+
+        Returns:
+            Bounding box (x1, y1, x2, y2) or None if not detected.
+        """
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        results = self.model(image, conf=confidence, verbose=False)
+
+        best_box = None
+        best_conf = 0.0
+
+        for result in results:
+            if result.boxes is None or len(result.boxes) == 0:
+                continue
+
+            for i, box in enumerate(result.boxes):
+                conf = float(box.conf[0])
+                if conf > best_conf:
+                    best_conf = conf
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    best_box = (float(x1), float(y1), float(x2), float(y2))
+
+        return best_box
+
+    def build_grid_from_detection(
+        self,
+        image: np.ndarray,
+        confidence: float = BOARD_CONFIDENCE_THRESHOLD,
+        margin: float = 0.0
+    ) -> Optional[Grid]:
+        """
+        Detect board and build grid in one step.
+
+        Args:
+            image: Input image as numpy array (BGR).
+            confidence: Minimum confidence threshold.
+            margin: Optional margin to shrink the bbox.
+
+        Returns:
+            Grid object or None if board not detected.
+        """
+        bbox = self.detect_board(image, confidence)
+
+        if bbox is None:
+            return None
+
+        board_detector = BoardDetector()
+        return board_detector.build_grid_from_bbox(bbox, margin)

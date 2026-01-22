@@ -20,7 +20,7 @@ from config.settings import (
     CLASS_TO_FEN,
     STARTING_FEN,
 )
-from .board_detector import Grid, Point
+from .board_detector import Grid
 from .piece_detector import DetectedPiece
 
 
@@ -31,7 +31,6 @@ class BoardState:
     pieces: List[Tuple[int, int, str]]  # (row, col, fen_symbol)
 
     def __post_init__(self):
-        # Ensure board has correct dimensions
         if len(self.board) != GRID_ROWS:
             raise ValueError(f"Board must have {GRID_ROWS} rows")
         for row in self.board:
@@ -74,11 +73,9 @@ class FENGenerator:
     - Uppercase letters for red pieces, lowercase for black
     """
 
-    # Class to FEN symbol mapping
     CLASS_TO_FEN = CLASS_TO_FEN
 
     def __init__(self):
-        """Initialize the FEN generator."""
         pass
 
     def map_pieces_to_grid(
@@ -96,22 +93,15 @@ class FENGenerator:
         Returns:
             BoardState object representing the board.
         """
-        # Initialize empty board
         board = [[None for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
         piece_positions = []
 
         for piece in pieces:
-            # Get piece center
             cx, cy = piece.center
-
-            # Find nearest grid cell
             row, col = grid.get_nearest_cell(cx, cy)
 
-            # Validate position
             if 0 <= row < GRID_ROWS and 0 <= col < GRID_COLS:
-                # Handle multiple pieces at same position (keep highest confidence)
-                current = board[row][col]
-                if current is None:
+                if board[row][col] is None:
                     board[row][col] = piece.fen_symbol
                     piece_positions.append((row, col, piece.fen_symbol))
 
@@ -126,7 +116,7 @@ class FENGenerator:
     ) -> BoardState:
         """
         Map pieces to grid using interpolation based on detected piece positions.
-        Estimates board bounds from the pieces themselves for better accuracy.
+        Fallback method when board detection fails.
 
         Args:
             pieces: List of detected pieces.
@@ -138,62 +128,32 @@ class FENGenerator:
             BoardState object.
         """
         if not pieces:
-            # Return empty board
             board = [[None for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
             return BoardState(board=board, pieces=[])
 
-        # Extract all piece centers
         centers_x = [p.center[0] for p in pieces]
         centers_y = [p.center[1] for p in pieces]
 
-        # Estimate board bounds from piece positions
-        # Add padding based on typical piece size (half cell)
         min_x, max_x = min(centers_x), max(centers_x)
         min_y, max_y = min(centers_y), max(centers_y)
 
-        # Estimate cell size from the spread of pieces
-        # Board has 9 columns (0-8) and 10 rows (0-9)
-        # So there are 8 gaps between columns and 9 gaps between rows
-        x_spread = max_x - min_x
-        y_spread = max_y - min_y
+        cell_width = (max_x - min_x) / (GRID_COLS - 1) if max_x > min_x else 1
+        cell_height = (max_y - min_y) / (GRID_ROWS - 1) if max_y > min_y else 1
 
-        # Estimate how many cell gaps the pieces span
-        # In a typical game with back rank pieces, pieces span all 8 column gaps and 9 row gaps
-        est_cell_width = x_spread / 8 if x_spread > 0 else image_width / 10
-        est_cell_height = y_spread / 9 if y_spread > 0 else image_height / 11
-
-        # The min/max values represent the piece centers at the edges
-        # For grid mapping, we use these directly as the grid boundaries
-        # board_left corresponds to column 0, board_right to column 8
-        # board_top corresponds to row 0, board_bottom to row 9
-        board_left = min_x
-        board_right = max_x
-        board_top = min_y
-        board_bottom = max_y
-
-        # Cell size is the spread divided by number of gaps
-        cell_width = (board_right - board_left) / (GRID_COLS - 1) if board_right > board_left else 1
-        cell_height = (board_bottom - board_top) / (GRID_ROWS - 1) if board_bottom > board_top else 1
-
-        # Initialize empty board
         board = [[None for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
         piece_positions = []
 
-        # Sort pieces by confidence (highest first) to handle conflicts
         sorted_pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)
 
         for piece in sorted_pieces:
             cx, cy = piece.center
 
-            # Calculate grid position
-            col = round((cx - board_left) / cell_width)
-            row = round((cy - board_top) / cell_height)
+            col = round((cx - min_x) / cell_width)
+            row = round((cy - min_y) / cell_height)
 
-            # Clamp to valid range
             col = max(0, min(GRID_COLS - 1, col))
             row = max(0, min(GRID_ROWS - 1, row))
 
-            # Place piece (highest confidence wins)
             if board[row][col] is None:
                 board[row][col] = piece.fen_symbol
                 piece_positions.append((row, col, piece.fen_symbol))
@@ -223,19 +183,16 @@ class FENGenerator:
                 if piece is None:
                     empty_count += 1
                 else:
-                    # Add empty count if any
                     if empty_count > 0:
                         fen_row += str(empty_count)
                         empty_count = 0
                     fen_row += piece
 
-            # Add remaining empty count
             if empty_count > 0:
                 fen_row += str(empty_count)
 
             fen_rows.append(fen_row)
 
-        # Join rows and add turn indicator
         fen_board = "/".join(fen_rows)
         return f"{fen_board} {turn}"
 
@@ -252,7 +209,6 @@ class FENGenerator:
         board = [[None for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
         piece_positions = []
 
-        # Split off turn indicator if present
         parts = fen.strip().split(" ")
         fen_board = parts[0]
         turn = parts[1] if len(parts) > 1 else "w"
@@ -291,10 +247,8 @@ class FENGenerator:
         except Exception as e:
             return False, [str(e)]
 
-        # Count pieces
         piece_counts = board_state.count_pieces()
 
-        # Validate piece counts
         max_pieces = {
             'k': 1, 'K': 1,  # Generals
             'a': 2, 'A': 2,  # Advisors
@@ -310,7 +264,6 @@ class FENGenerator:
             if count > max_count:
                 errors.append(f"Too many {piece}: {count} > {max_count}")
 
-        # Check for generals
         if piece_counts.get('k', 0) != 1:
             errors.append("Missing black general (k)")
         if piece_counts.get('K', 0) != 1:
@@ -341,7 +294,7 @@ class FENGenerator:
                 p1 = board1.board[row][col]
                 p2 = board2.board[row][col]
 
-                if p1 or p2:  # At least one has a piece
+                if p1 or p2:
                     total += 1
                     if p1 == p2:
                         matching += 1
@@ -398,15 +351,13 @@ class FENGenerator:
         red_avg_row = red_y_sum / red_count
         black_avg_row = black_y_sum / black_count
 
-        # In standard orientation, black should be at smaller row numbers (top)
-        # If red has smaller row numbers, board is flipped
         if red_avg_row < black_avg_row:
             return 'flipped'
         return 'standard'
 
     def flip_board(self, board_state: BoardState) -> BoardState:
         """
-        Flip the board vertically (row 0 becomes row 9, etc.).
+        Flip the board 180 degrees.
         Used to normalize board orientation.
         """
         new_board = [[None for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
@@ -417,7 +368,7 @@ class FENGenerator:
                 piece = board_state.board[row][col]
                 if piece:
                     new_row = GRID_ROWS - 1 - row
-                    new_col = GRID_COLS - 1 - col  # Also flip horizontally for 180° rotation
+                    new_col = GRID_COLS - 1 - col
                     new_board[new_row][new_col] = piece
                     new_positions.append((new_row, new_col, piece))
 

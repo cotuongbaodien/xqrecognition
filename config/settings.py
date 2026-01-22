@@ -15,16 +15,17 @@ BOARD_SEG_DATA = DATA_DIR / "board_seg"
 PIECES_DATA = DATA_DIR / "pieces"
 
 # Model paths
-BOARD_SEG_MODEL = MODELS_DIR / "board_seg.pt"
-PIECES_DET_MODEL = MODELS_DIR / "pieces_det.pt"
+BOARD_SEG_MODEL = MODELS_DIR / "board_seg.pt"    # Board segmentation (fallback)
+BOARD_DET_MODEL = MODELS_DIR / "board_det.pt"    # Board bounding box (primary)
+PIECES_DET_MODEL = MODELS_DIR / "pieces_det.pt"  # Pieces detection
 
 # Dataset zip files
 BOARD_SEG_ZIP = DOWNLOAD_DIR / "seg_chinese_chess.v3i.yolov8.zip"
 PIECES_DET_ZIP = DOWNLOAD_DIR / "Chinese-chess.v9i.yolov8.zip"
 
 # Grid dimensions for Xiangqi board
-GRID_COLS = 9  # 0-8
-GRID_ROWS = 10  # 0-9
+GRID_COLS = 9   # 0-8 (files a-i)
+GRID_ROWS = 10  # 0-9 (ranks)
 TOTAL_INTERSECTIONS = GRID_COLS * GRID_ROWS  # 90
 
 # Board segmentation class
@@ -71,7 +72,7 @@ TRAIN_CONFIG = {
 # Board segmentation training settings
 BOARD_SEG_TRAIN_CONFIG = {
     "epochs": 100,
-    "batch_size": 8,  # Smaller batch for segmentation
+    "batch_size": 8,
     "img_size": 640,
     "patience": 20,
     "device": "auto",
@@ -84,7 +85,7 @@ PIECE_CONFIDENCE_THRESHOLD = 0.5
 # Standard Xiangqi starting position FEN
 STARTING_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR"
 
-# Display names for visualization
+# Display names for visualization (Vietnamese)
 PIECE_DISPLAY_NAMES = {
     "Advisor_black": "Sĩ đen",
     "Advisor_red": "Sĩ đỏ",

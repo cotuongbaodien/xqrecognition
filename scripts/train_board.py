@@ -97,7 +97,7 @@ def train_board_model(
         print(f"Starting from pretrained: {pretrained}")
         model = YOLO(pretrained)
 
-    # Train
+    # Train with augmentation settings matching Roboflow preprocessing
     results = model.train(
         data=str(data_path),
         epochs=epochs,
@@ -109,6 +109,15 @@ def train_board_model(
         project=str(PROJECT_ROOT / "runs" / "board_seg"),
         name="train",
         exist_ok=True,
+        # Augmentation settings matching Roboflow
+        flipud=0.5,         # Vertical flip probability
+        fliplr=0.5,         # Horizontal flip probability
+        degrees=15.0,       # Rotation ±15°
+        shear=13.0,         # Shear ±13°
+        hsv_h=0.015,        # HSV-Hue augmentation
+        hsv_s=0.15,         # HSV-Saturation (brightness)
+        hsv_v=0.1,          # HSV-Value (exposure)
+        mosaic=1.0,         # Mosaic augmentation
     )
 
     # Copy best model to models directory
