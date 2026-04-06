@@ -197,7 +197,7 @@ class BoardDetector:
     def build_grid_from_bbox(
         self,
         bbox: Tuple[float, float, float, float],
-        margin: float = 0.0
+        margin: float = 0.02
     ) -> Grid:
         """
         Build grid from board bounding box.

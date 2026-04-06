@@ -97,7 +97,7 @@ def train_pieces_model(
         print(f"Starting from pretrained: {pretrained}")
         model = YOLO(pretrained)
 
-    # Train
+    # Train with augmentation for robustness across domains
     results = model.train(
         data=str(data_path),
         epochs=epochs,
@@ -109,6 +109,16 @@ def train_pieces_model(
         project=str(PROJECT_ROOT / "runs" / "pieces_det"),
         name="train",
         exist_ok=True,
+        # Augmentation for domain robustness
+        flipud=0.0,          # Không lật dọc (quân cờ có hướng)
+        fliplr=0.5,          # Lật ngang
+        degrees=15.0,         # Xoay ±15°
+        perspective=0.0005,   # Perspective transform nhẹ
+        hsv_h=0.02,          # Biến đổi hue
+        hsv_s=0.3,           # Biến đổi saturation (ánh sáng khác nhau)
+        hsv_v=0.3,           # Biến đổi brightness
+        scale=0.3,           # Scale variation
+        mosaic=1.0,          # Mosaic augmentation
     )
 
     # Copy best model to models directory
@@ -130,8 +140,8 @@ def main():
     parser.add_argument("--img-size", type=int, help="Image size")
     parser.add_argument("--device", type=str, help="Device (cpu/cuda/mps/auto)")
     parser.add_argument("--resume", action="store_true", help="Resume training")
-    parser.add_argument("--pretrained", type=str, default="yolov8n.pt",
-                        help="Pretrained model")
+    parser.add_argument("--pretrained", type=str, default="yolov8s.pt",
+                        help="Pretrained model (yolov8s.pt recommended for accuracy)")
 
     args = parser.parse_args()
 

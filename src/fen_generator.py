@@ -6,6 +6,7 @@ Converts board state to FEN string representation.
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict
 
+import cv2
 import numpy as np
 
 import sys
@@ -81,7 +82,8 @@ class FENGenerator:
     def map_pieces_to_grid(
         self,
         pieces: List[DetectedPiece],
-        grid: Grid
+        grid: Grid,
+        max_distance_ratio: float = 0.6
     ) -> BoardState:
         """
         Map detected pieces to grid positions.
@@ -89,21 +91,51 @@ class FENGenerator:
         Args:
             pieces: List of detected pieces.
             grid: The board grid.
+            max_distance_ratio: Max distance to grid cell as ratio of cell size.
+                Pieces further than this are discarded as false positives.
 
         Returns:
             BoardState object representing the board.
         """
         board = [[None for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
+        # Track confidence per cell for collision resolution
+        board_confidence = [[0.0 for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
         piece_positions = []
 
-        for piece in pieces:
+        max_dist = max(grid.cell_width, grid.cell_height) * max_distance_ratio
+
+        # Sort by confidence descending so high-confidence pieces get priority
+        sorted_pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)
+
+        for piece in sorted_pieces:
             cx, cy = piece.center
             row, col = grid.get_nearest_cell(cx, cy)
 
-            if 0 <= row < GRID_ROWS and 0 <= col < GRID_COLS:
-                if board[row][col] is None:
-                    board[row][col] = piece.fen_symbol
-                    piece_positions.append((row, col, piece.fen_symbol))
+            if not (0 <= row < GRID_ROWS and 0 <= col < GRID_COLS):
+                continue
+
+            # Distance check: discard pieces too far from any grid cell
+            if max_dist > 0:
+                px, py = grid.points[row, col]
+                dist = np.sqrt((cx - px) ** 2 + (cy - py) ** 2)
+                if dist > max_dist:
+                    continue
+
+            # Collision resolution: keep piece with higher confidence
+            if board[row][col] is None:
+                board[row][col] = piece.fen_symbol
+                board_confidence[row][col] = piece.confidence
+                piece_positions.append((row, col, piece.fen_symbol))
+            elif piece.confidence > board_confidence[row][col]:
+                # Replace with higher confidence piece
+                old_symbol = board[row][col]
+                board[row][col] = piece.fen_symbol
+                board_confidence[row][col] = piece.confidence
+                piece_positions = [
+                    (r, c, s) for r, c, s in piece_positions
+                    if not (r == row and c == col)
+                ]
+                piece_positions.append((row, col, piece.fen_symbol))
 
         return BoardState(board=board, pieces=piece_positions)
 
@@ -326,9 +358,14 @@ class FENGenerator:
         Detect board orientation based on piece positions.
         Standard Xiangqi: Black at top (row 0-4), Red at bottom (row 5-9).
 
+        Uses General (K/k) positions as primary signal, falls back to
+        average piece positions if generals not found.
+
         Returns:
             'standard' if black is at top, 'flipped' if red is at top.
         """
+        red_general_row = None
+        black_general_row = None
         red_y_sum = 0
         red_count = 0
         black_y_sum = 0
@@ -338,13 +375,32 @@ class FENGenerator:
             for col in range(GRID_COLS):
                 piece = board_state.board[row][col]
                 if piece:
-                    if piece.isupper():  # Red piece
+                    if piece == 'K':
+                        red_general_row = row
+                    elif piece == 'k':
+                        black_general_row = row
+                    if piece.isupper():
                         red_y_sum += row
                         red_count += 1
-                    else:  # Black piece
+                    else:
                         black_y_sum += row
                         black_count += 1
 
+        # Primary: use General positions (most reliable)
+        if red_general_row is not None and black_general_row is not None:
+            if red_general_row < black_general_row:
+                return 'flipped'
+            return 'standard'
+
+        # If only one general found, check if it's in expected half
+        if red_general_row is not None:
+            # Red general should be in rows 7-9 (standard)
+            return 'flipped' if red_general_row < 5 else 'standard'
+        if black_general_row is not None:
+            # Black general should be in rows 0-2 (standard)
+            return 'flipped' if black_general_row >= 5 else 'standard'
+
+        # Fallback: use average piece positions
         if red_count == 0 or black_count == 0:
             return 'standard'
 
@@ -374,13 +430,102 @@ class FENGenerator:
 
         return BoardState(board=new_board, pieces=new_positions)
 
-    def normalize_board_orientation(self, board_state: BoardState) -> BoardState:
+    def mirror_board_horizontal(self, board_state: BoardState) -> BoardState:
+        """Mirror the board left-right (reverse columns)."""
+        new_board = [[None for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
+        new_positions = []
+
+        for row in range(GRID_ROWS):
+            for col in range(GRID_COLS):
+                piece = board_state.board[row][col]
+                if piece:
+                    new_col = GRID_COLS - 1 - col
+                    new_board[row][new_col] = piece
+                    new_positions.append((row, new_col, piece))
+
+        return BoardState(board=new_board, pieces=new_positions)
+
+    def detect_needs_mirror(self, image: np.ndarray, bbox) -> bool:
         """
-        Normalize board to standard orientation (black at top, red at bottom).
+        Detect if the board image needs horizontal mirroring.
+
+        Uses multiple image features: gradient direction in the river area,
+        full board gradient, and text density in corners. These features
+        are combined into a single score.
+
+        Args:
+            image: Original image (BGR).
+            bbox: Board bounding box (x1, y1, x2, y2).
+
+        Returns:
+            True if the board needs horizontal mirroring.
         """
+        if bbox is None:
+            return False
+
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        board = image[y1:y2, x1:x2]
+        bh, bw = board.shape[:2]
+
+        if bh < 20 or bw < 20:
+            return False
+
+        gray = cv2.cvtColor(board, cv2.COLOR_BGR2GRAY)
+
+        # Feature 1: Full board horizontal gradient moment
+        sobelx_full = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        moment_full = np.mean(sobelx_full)
+
+        # Feature 2: River area gradient moment
+        ry1 = int(bh * 0.43)
+        ry2 = int(bh * 0.57)
+        sobelx_river = cv2.Sobel(gray[ry1:ry2], cv2.CV_64F, 1, 0, ksize=3)
+        moment_river = np.mean(sobelx_river)
+
+        # Feature 3: Top edge text density (left vs right)
+        tl = gray[:int(bh * 0.08), :int(bw * 0.3)]
+        tr = gray[:int(bh * 0.08), int(bw * 0.7):]
+        edges_tl = np.sum(cv2.Canny(tl, 50, 150) > 0)
+        edges_tr = np.sum(cv2.Canny(tr, 50, 150) > 0)
+        text_top = (edges_tl - edges_tr) / max(edges_tl + edges_tr, 1)
+
+        # Feature 4: Bottom edge text density (left vs right)
+        bl = gray[int(bh * 0.92):, :int(bw * 0.3)]
+        br = gray[int(bh * 0.92):, int(bw * 0.7):]
+        edges_bl = np.sum(cv2.Canny(bl, 50, 150) > 0)
+        edges_br = np.sum(cv2.Canny(br, 50, 150) > 0)
+        text_bot = (edges_bl - edges_br) / max(edges_bl + edges_br, 1)
+
+        # Combined score: positive = needs mirror
+        score = moment_full + moment_river * 0.5 + text_top * 2 + text_bot * 2
+
+        return score > 0.8
+
+    def normalize_board_orientation(
+        self,
+        board_state: BoardState,
+        image: np.ndarray = None,
+        bbox=None
+    ) -> BoardState:
+        """
+        Normalize board to standard orientation.
+        Handles both vertical flip (red/black swap) and horizontal mirror.
+
+        Args:
+            board_state: Board state to normalize.
+            image: Original image for mirror detection (optional).
+            bbox: Board bounding box for mirror detection (optional).
+        """
+        # Step 1: Fix vertical orientation (red at bottom, black at top)
         orientation = self.detect_board_orientation(board_state)
         if orientation == 'flipped':
-            return self.flip_board(board_state)
+            board_state = self.flip_board(board_state)
+
+        # Step 2: Check if horizontal mirror is needed using image analysis
+        if image is not None and bbox is not None:
+            if self.detect_needs_mirror(image, bbox):
+                board_state = self.mirror_board_horizontal(board_state)
+
         return board_state
 
     def board_to_ascii(self, board_state: BoardState) -> str:

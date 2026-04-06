@@ -25,6 +25,7 @@ from config.settings import (
 from .board_detector import BoardDetector, BoardBoxDetector, Grid
 from .piece_detector import PieceDetector, DetectedPiece
 from .fen_generator import FENGenerator, BoardState
+from .rules_validator import RulesValidator
 
 
 @dataclass
@@ -88,6 +89,7 @@ class XiangqiRecognizer:
         self.board_box_detector = BoardBoxDetector()
         self.piece_detector = PieceDetector()
         self.fen_generator = FENGenerator()
+        self.rules_validator = RulesValidator()
 
         # Load models
         board_seg_path = board_model_path or str(BOARD_SEG_MODEL)
@@ -165,11 +167,16 @@ class XiangqiRecognizer:
         """
         errors = []
         grid = None
+        bbox = None
         h, w = image.shape[:2]
 
         # Step 1: Detect pieces
         pieces = self.piece_detector.detect_pieces(image, confidence=piece_confidence)
-        pieces = self.piece_detector.non_max_suppression(pieces, iou_threshold=0.5)
+        pieces = self.piece_detector.non_max_suppression(pieces, iou_threshold=0.35)
+
+        # Cap at max 32 pieces (maximum in Xiangqi)
+        if len(pieces) > 32:
+            pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)[:32]
 
         # Step 2: Build grid using board bounding box detection
         if self.use_board_detection and self.board_box_detector.model is not None:
@@ -184,7 +191,7 @@ class XiangqiRecognizer:
             intersections = self.board_detector.detect_intersections(
                 image, confidence=board_confidence
             )
-            if len(intersections) >= 20:
+            if len(intersections) >= 50:
                 grid = self.board_detector.build_grid(intersections)
             else:
                 errors.append(f"Only {len(intersections)} intersections detected")
@@ -198,10 +205,35 @@ class XiangqiRecognizer:
             )
             errors.append("Using interpolation-based grid estimation")
 
-        # Step 4: Normalize board orientation
-        board_state = self.fen_generator.normalize_board_orientation(board_state)
+        # Step 4: Normalize board orientation (pass image for mirror detection)
+        board_state = self.fen_generator.normalize_board_orientation(
+            board_state, image=image, bbox=bbox
+        )
 
-        # Step 5: Generate FEN
+        # Step 5: Validate and correct using game rules
+        piece_confidences = {}
+        for piece in pieces:
+            cx, cy = piece.center
+            if grid is not None:
+                row, col = grid.get_nearest_cell(cx, cy)
+            else:
+                # Approximate row/col for interpolation case
+                centers_x = [p.center[0] for p in pieces]
+                centers_y = [p.center[1] for p in pieces]
+                min_x, max_x = min(centers_x), max(centers_x)
+                min_y, max_y = min(centers_y), max(centers_y)
+                cell_w = (max_x - min_x) / 8 if max_x > min_x else 1
+                cell_h = (max_y - min_y) / 9 if max_y > min_y else 1
+                col = round((cx - min_x) / cell_w)
+                row = round((cy - min_y) / cell_h)
+                col = max(0, min(8, col))
+                row = max(0, min(9, row))
+            piece_confidences[(row, col)] = piece.confidence
+        board_state = self.rules_validator.validate_and_correct(
+            board_state, piece_confidences
+        )
+
+        # Step 6: Generate FEN
         fen = self.fen_generator.generate_fen(board_state)
 
         # Calculate confidence
