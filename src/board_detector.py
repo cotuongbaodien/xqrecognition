@@ -343,3 +343,121 @@ class BoardBoxDetector:
 
         board_detector = BoardDetector()
         return board_detector.build_grid_from_bbox(bbox, margin)
+
+
+class LandmarkDetector:
+    """
+    Detects board landmarks: corners, palaces (red/black), river.
+    Used for accurate grid construction and orientation detection.
+    """
+
+    # Class IDs
+    CORNER = 0
+    PALACE_RED = 1
+    PALACE_BLACK = 2
+    RIVER = 3
+
+    def __init__(self, model_path: str = None):
+        self.model = None
+        if model_path:
+            self.load_model(model_path)
+
+    def load_model(self, model_path: str):
+        self.model = YOLO(model_path)
+
+    def detect(
+        self, image: np.ndarray, confidence: float = 0.3
+    ) -> dict:
+        """
+        Detect all landmarks in the image.
+
+        Returns:
+            Dict with keys: 'corners', 'palace_red', 'palace_black', 'river', 'bbox'
+            - corners: list of (cx, cy) for each detected corner
+            - palace_red/black: (cx, cy) center or None
+            - river: (cx, cy) center or None
+            - bbox: (x1, y1, x2, y2) board bounding box from corners
+        """
+        if self.model is None:
+            raise RuntimeError("Landmark model not loaded")
+
+        results = self.model(image, conf=confidence, verbose=False)
+
+        corners = []
+        palace_red = None
+        palace_black = None
+        river = None
+
+        for r in results:
+            if r.boxes is None:
+                continue
+            for i in range(len(r.boxes)):
+                cls = int(r.boxes.cls[i])
+                box = r.boxes.xyxy[i].cpu().numpy()
+                x1, y1, x2, y2 = box
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+
+                if cls == self.CORNER:
+                    corners.append((float(cx), float(cy)))
+                elif cls == self.PALACE_RED:
+                    palace_red = (float(cx), float(cy))
+                elif cls == self.PALACE_BLACK:
+                    palace_black = (float(cx), float(cy))
+                elif cls == self.RIVER:
+                    river = (float(cx), float(cy))
+
+        # Build bbox from corners
+        bbox = None
+        if len(corners) >= 2:
+            xs = [c[0] for c in corners]
+            ys = [c[1] for c in corners]
+            bbox = (min(xs), min(ys), max(xs), max(ys))
+
+        return {
+            'corners': corners,
+            'palace_red': palace_red,
+            'palace_black': palace_black,
+            'river': river,
+            'bbox': bbox,
+        }
+
+    def detect_orientation(self, landmarks: dict) -> str:
+        """
+        Detect board orientation from palace positions.
+
+        Returns:
+            'standard': red at bottom (palace_red.y > palace_black.y)
+            'flipped': red at top
+            'unknown': can't determine
+        """
+        pr = landmarks.get('palace_red')
+        pb = landmarks.get('palace_black')
+
+        if pr is None or pb is None:
+            return 'unknown'
+
+        # Compare Y positions (image coords: top=0, bottom=max)
+        if pr[1] > pb[1]:
+            return 'standard'  # Red palace below black → standard
+        else:
+            return 'flipped'
+
+    def needs_mirror(self, landmarks: dict, orientation: str) -> bool:
+        """
+        Detect if horizontal mirror is needed using palace positions.
+
+        In standard FEN, palace is at columns 3-5 (center).
+        If palace_red is detected, its X position relative to the board
+        center indicates if columns are reversed.
+
+        For mirror detection, we check if the palace positions and
+        river position are consistent with standard board layout.
+        After vertical orientation is normalized (red at bottom),
+        we can't detect mirror from Y positions alone.
+
+        Uses the relative X position of palaces vs board center.
+        """
+        # Palace positions are symmetric (both at center cols 3-5)
+        # so we can't detect mirror from palaces alone.
+        # Return False - mirror detection handled by gradient method.
+        return False

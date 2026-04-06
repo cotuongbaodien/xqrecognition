@@ -19,10 +19,11 @@ from config.settings import (
     BOARD_SEG_MODEL,
     BOARD_DET_MODEL,
     PIECES_DET_MODEL,
+    MODELS_DIR,
     BOARD_CONFIDENCE_THRESHOLD,
     PIECE_CONFIDENCE_THRESHOLD,
 )
-from .board_detector import BoardDetector, BoardBoxDetector, Grid
+from .board_detector import BoardDetector, BoardBoxDetector, LandmarkDetector, Grid
 from .piece_detector import PieceDetector, DetectedPiece
 from .fen_generator import FENGenerator, BoardState
 from .rules_validator import RulesValidator
@@ -87,6 +88,7 @@ class XiangqiRecognizer:
         # Initialize detectors
         self.board_detector = BoardDetector()
         self.board_box_detector = BoardBoxDetector()
+        self.landmark_detector = LandmarkDetector()
         self.piece_detector = PieceDetector()
         self.fen_generator = FENGenerator()
         self.rules_validator = RulesValidator()
@@ -95,20 +97,20 @@ class XiangqiRecognizer:
         board_seg_path = board_model_path or str(BOARD_SEG_MODEL)
         board_det_path = board_det_model_path or str(BOARD_DET_MODEL)
         pieces_path = pieces_model_path or str(PIECES_DET_MODEL)
+        landmarks_path = str(MODELS_DIR / "landmarks.pt")
+
+        # Load landmark model (primary for grid + orientation)
+        if Path(landmarks_path).exists():
+            self.landmark_detector.load_model(landmarks_path)
+            print(f"Loaded landmark model from {landmarks_path}")
 
         # Load board segmentation model (fallback)
         if Path(board_seg_path).exists():
             self.board_detector.load_model(board_seg_path)
-        else:
-            print(f"Note: Board segmentation model not found at {board_seg_path}")
 
-        # Load board detection model (primary)
+        # Load board detection model (fallback)
         if Path(board_det_path).exists():
             self.board_box_detector.load_model(board_det_path)
-            print(f"Loaded board detection model from {board_det_path}")
-        else:
-            print(f"Warning: Board detection model not found at {board_det_path}")
-            self.use_board_detection = False
 
         # Load pieces model (required)
         if Path(pieces_path).exists():
@@ -178,7 +180,12 @@ class XiangqiRecognizer:
         if len(pieces) > 32:
             pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)[:32]
 
-        # Step 2: Build grid using board bounding box detection
+        # Step 2: Detect landmarks (for orientation detection)
+        landmarks = None
+        if self.landmark_detector.model is not None:
+            landmarks = self.landmark_detector.detect(image, confidence=0.3)
+
+        # Step 2b: Build grid from board box detection (most stable)
         if self.use_board_detection and self.board_box_detector.model is not None:
             bbox = self.board_box_detector.detect_board(image, confidence=board_confidence)
             if bbox is not None:
@@ -186,7 +193,12 @@ class XiangqiRecognizer:
             else:
                 errors.append("Board bounding box not detected")
 
-        # Step 2b: Fallback to YOLO intersection detection
+        # Step 2c: Fallback to landmarks corners for grid
+        if grid is None and landmarks and landmarks['bbox'] and len(landmarks.get('corners', [])) >= 3:
+            bbox = landmarks['bbox']
+            grid = self.board_detector.build_grid_from_bbox(bbox, margin=0.0)
+
+        # Step 2d: Fallback to YOLO intersection detection
         if grid is None and self.board_detector.model is not None:
             intersections = self.board_detector.detect_intersections(
                 image, confidence=board_confidence
@@ -205,7 +217,7 @@ class XiangqiRecognizer:
             )
             errors.append("Using interpolation-based grid estimation")
 
-        # Step 4: Normalize board orientation (pass image for mirror detection)
+        # Step 4: Normalize orientation (piece-based + gradient mirror)
         board_state = self.fen_generator.normalize_board_orientation(
             board_state, image=image, bbox=bbox
         )

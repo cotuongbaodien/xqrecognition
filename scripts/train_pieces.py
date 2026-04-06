@@ -108,7 +108,7 @@ def train_pieces_model(
         save=True,
         project=str(PROJECT_ROOT / "runs" / "pieces_det"),
         name="train",
-        exist_ok=True,
+        exist_ok=False,
         # Augmentation for domain robustness
         flipud=0.0,          # Không lật dọc (quân cờ có hướng)
         fliplr=0.5,          # Lật ngang

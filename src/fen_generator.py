@@ -528,6 +528,18 @@ class FENGenerator:
 
         return board_state
 
+    def normalize_mirror(
+        self,
+        board_state: BoardState,
+        image: np.ndarray = None,
+        bbox=None
+    ) -> BoardState:
+        """Check and apply horizontal mirror only (vertical already handled)."""
+        if image is not None and bbox is not None:
+            if self.detect_needs_mirror(image, bbox):
+                board_state = self.mirror_board_horizontal(board_state)
+        return board_state
+
     def board_to_ascii(self, board_state: BoardState) -> str:
         """
         Convert board state to ASCII representation.
