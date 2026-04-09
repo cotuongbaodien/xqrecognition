@@ -25,6 +25,7 @@ from config.settings import (
 )
 from .board_detector import BoardDetector, BoardBoxDetector, LandmarkDetector, Grid
 from .piece_detector import PieceDetector, DetectedPiece
+from .item_detector import ItemDetector
 from .fen_generator import FENGenerator, BoardState
 from .rules_validator import RulesValidator
 
@@ -89,6 +90,7 @@ class XiangqiRecognizer:
         self.board_detector = BoardDetector()
         self.board_box_detector = BoardBoxDetector()
         self.landmark_detector = LandmarkDetector()
+        self.item_detector = ItemDetector()
         self.piece_detector = PieceDetector()
         self.fen_generator = FENGenerator()
         self.rules_validator = RulesValidator()
@@ -98,11 +100,16 @@ class XiangqiRecognizer:
         board_det_path = board_det_model_path or str(BOARD_DET_MODEL)
         pieces_path = pieces_model_path or str(PIECES_DET_MODEL)
         landmarks_path = str(MODELS_DIR / "landmarks.pt")
+        items_path = str(MODELS_DIR / "items.pt")
 
-        # Load landmark model (primary for grid + orientation)
+        # Load item model (primary for landmarks)
+        if Path(items_path).exists():
+            self.item_detector.load_model(items_path)
+            print(f"Loaded item model from {items_path}")
+
+        # Load landmark model (legacy fallback)
         if Path(landmarks_path).exists():
             self.landmark_detector.load_model(landmarks_path)
-            print(f"Loaded landmark model from {landmarks_path}")
 
         # Load board segmentation model (fallback)
         if Path(board_seg_path).exists():
@@ -172,7 +179,7 @@ class XiangqiRecognizer:
         bbox = None
         h, w = image.shape[:2]
 
-        # Step 1: Detect pieces
+        # Step 1: Detect pieces (using legacy pieces_det.pt - more piece data)
         pieces = self.piece_detector.detect_pieces(image, confidence=piece_confidence)
         pieces = self.piece_detector.non_max_suppression(pieces, iou_threshold=0.35)
 
@@ -180,12 +187,12 @@ class XiangqiRecognizer:
         if len(pieces) > 32:
             pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)[:32]
 
-        # Step 2: Detect landmarks (for orientation detection)
-        landmarks = None
-        if self.landmark_detector.model is not None:
-            landmarks = self.landmark_detector.detect(image, confidence=0.3)
+        # Step 2: Detect items (landmarks) for orientation/mirror later
+        item_result = None
+        if self.item_detector.model is not None:
+            item_result = self.item_detector.detect(image, confidence=0.3)
 
-        # Step 2b: Build grid from board box detection (most stable)
+        # Step 2a: Build grid from board box detection (most reliable for piece mapping)
         if self.use_board_detection and self.board_box_detector.model is not None:
             bbox = self.board_box_detector.detect_board(image, confidence=board_confidence)
             if bbox is not None:
@@ -193,12 +200,15 @@ class XiangqiRecognizer:
             else:
                 errors.append("Board bounding box not detected")
 
-        # Step 2c: Fallback to landmarks corners for grid
-        if grid is None and landmarks and landmarks['bbox'] and len(landmarks.get('corners', [])) >= 3:
-            bbox = landmarks['bbox']
-            grid = self.board_detector.build_grid_from_bbox(bbox, margin=0.0)
+        # Step 2b: Fallback to item landmarks if board_det fails
+        if grid is None and item_result is not None:
+            grid = ItemDetector.build_grid_from_landmarks(
+                item_result, image_shape=(h, w)
+            )
+            if grid is None:
+                errors.append("Item detector: failed to build grid from landmarks")
 
-        # Step 2d: Fallback to YOLO intersection detection
+        # Step 2c: Fallback to YOLO intersection detection
         if grid is None and self.board_detector.model is not None:
             intersections = self.board_detector.detect_intersections(
                 image, confidence=board_confidence
@@ -217,10 +227,12 @@ class XiangqiRecognizer:
             )
             errors.append("Using interpolation-based grid estimation")
 
-        # Step 4: Normalize orientation (piece-based + gradient mirror)
-        board_state = self.fen_generator.normalize_board_orientation(
-            board_state, image=image, bbox=bbox
-        )
+        # Step 4: Normalize VERTICAL orientation only (red at bottom, black at top)
+        # We do NOT apply horizontal mirror - the consuming app handles mirror.
+        # Mirror auto-detection is unreliable and can produce wrong results.
+        orientation = self.fen_generator.detect_board_orientation(board_state)
+        if orientation == 'flipped':
+            board_state = self.fen_generator.flip_board(board_state)
 
         # Step 5: Validate and correct using game rules
         piece_confidences = {}

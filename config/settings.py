@@ -34,6 +34,49 @@ BOARD_SEG_CLASSES = {
 }
 
 # Piece detection classes - mapping class ID to (name, FEN symbol)
+# =============================================================
+# Item detection classes (NEW STANDARD - itemdetection.yolov8)
+# 18 classes: 14 pieces + 4 landmarks
+# Used by models/items.pt
+# =============================================================
+ITEM_CLASSES = {
+    0:  ("black-advisor",  "a"),
+    1:  ("black-cannon",   "c"),
+    2:  ("black-chariot",  "r"),
+    3:  ("black-elephant", "b"),
+    4:  ("black-general",  "k"),
+    5:  ("black-horse",    "n"),
+    6:  ("black-soldier",  "p"),
+    7:  ("board-conner",   None),
+    8:  ("palace-bottom",  None),
+    9:  ("palace-center",  None),
+    10: ("palace-conner",  None),
+    11: ("red-advisor",    "A"),
+    12: ("red-cannon",     "C"),
+    13: ("red-chariot",    "R"),
+    14: ("red-elephant",   "B"),
+    15: ("red-general",    "K"),
+    16: ("red-horse",      "N"),
+    17: ("red-soldier",    "P"),
+}
+
+# Piece / landmark ID sets for ItemDetector
+PIECE_CLASS_IDS = {cid for cid, (_, fen) in ITEM_CLASSES.items() if fen is not None}
+LANDMARK_CLASS_IDS = {cid for cid, (_, fen) in ITEM_CLASSES.items() if fen is None}
+ITEM_CLASS_NAMES = [ITEM_CLASSES[i][0] for i in range(len(ITEM_CLASSES))]
+
+# Landmark class name → ID
+LANDMARK_NAMES = {
+    "board-conner":  7,
+    "palace-bottom": 8,
+    "palace-center": 9,
+    "palace-conner": 10,
+}
+
+# =============================================================
+# Legacy piece classes (LEGACY - for models/pieces_det.pt)
+# 14 classes only, original Roboflow training order
+# =============================================================
 PIECE_CLASSES = {
     0: ("Advisor_black", "a"),
     1: ("Advisor_red", "A"),
@@ -51,13 +94,13 @@ PIECE_CLASSES = {
     13: ("Rook_red", "R"),
 }
 
-# Class ID to FEN symbol mapping
-CLASS_TO_FEN = {class_id: fen for class_id, (_, fen) in PIECE_CLASSES.items()}
+# Class ID to FEN symbol mapping (legacy pieces_det.pt)
+CLASS_TO_FEN = {cid: fen for cid, (_, fen) in PIECE_CLASSES.items()}
 
-# FEN symbol to class ID mapping
-FEN_TO_CLASS = {fen: class_id for class_id, (_, fen) in PIECE_CLASSES.items()}
+# FEN symbol to class ID mapping (legacy)
+FEN_TO_CLASS = {fen: cid for cid, (_, fen) in PIECE_CLASSES.items()}
 
-# Class names list (for YOLO training)
+# Class names list (legacy)
 PIECE_CLASS_NAMES = [PIECE_CLASSES[i][0] for i in range(len(PIECE_CLASSES))]
 
 # Training settings
@@ -85,20 +128,39 @@ PIECE_CONFIDENCE_THRESHOLD = 0.5
 # Standard Xiangqi starting position FEN
 STARTING_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR"
 
-# Display names for visualization (Vietnamese)
+# Display names for visualization (Vietnamese) - supports BOTH naming conventions
 PIECE_DISPLAY_NAMES = {
-    "Advisor_black": "Sĩ đen",
-    "Advisor_red": "Sĩ đỏ",
-    "Cannon_black": "Pháo đen",
-    "Cannon_red": "Pháo đỏ",
+    # New (kebab-case)
+    "black-advisor":  "Sĩ đen",
+    "red-advisor":    "Sĩ đỏ",
+    "black-cannon":   "Pháo đen",
+    "red-cannon":     "Pháo đỏ",
+    "black-elephant": "Tượng đen",
+    "red-elephant":   "Tượng đỏ",
+    "black-general":  "Tướng đen",
+    "red-general":    "Tướng đỏ",
+    "black-horse":    "Mã đen",
+    "red-horse":      "Mã đỏ",
+    "black-soldier":  "Tốt đen",
+    "red-soldier":    "Tốt đỏ",
+    "black-chariot":  "Xe đen",
+    "red-chariot":    "Xe đỏ",
+    # Legacy (snake_case)
+    "Advisor_black":  "Sĩ đen",
+    "Advisor_red":    "Sĩ đỏ",
+    "Cannon_black":   "Pháo đen",
+    "Cannon_red":     "Pháo đỏ",
     "Elephant_black": "Tượng đen",
-    "Elephant_red": "Tượng đỏ",
-    "General_black": "Tướng đen",
-    "General_red": "Tướng đỏ",
-    "Knight_black": "Mã đen",
-    "Knight_red": "Mã đỏ",
-    "Pawn_black": "Tốt đen",
-    "Pawn_red": "Tốt đỏ",
-    "Rook_black": "Xe đen",
-    "Rook_red": "Xe đỏ",
+    "Elephant_red":   "Tượng đỏ",
+    "General_black":  "Tướng đen",
+    "General_red":    "Tướng đỏ",
+    "Knight_black":   "Mã đen",
+    "Knight_red":     "Mã đỏ",
+    "Pawn_black":     "Tốt đen",
+    "Pawn_red":       "Tốt đỏ",
+    "Rook_black":     "Xe đen",
+    "Rook_red":       "Xe đỏ",
 }
+
+# Models
+ITEMS_MODEL = MODELS_DIR / "items.pt"  # Unified model: pieces + landmarks
