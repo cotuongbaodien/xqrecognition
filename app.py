@@ -18,7 +18,7 @@ from pydantic import BaseModel
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.settings import BOARD_SEG_MODEL, PIECES_DET_MODEL
+from config.settings import ITEMS_MODEL
 from src.pipeline import XiangqiRecognizer
 
 
@@ -45,20 +45,14 @@ class DetectionResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Response model for health check."""
     status: str
-    board_model_loaded: bool
-    pieces_model_loaded: bool
+    items_model_loaded: bool
 
 
 def get_recognizer() -> XiangqiRecognizer:
     """Get or initialize the recognizer instance."""
     global recognizer
     if recognizer is None:
-        use_board = BOARD_SEG_MODEL.exists()
-        recognizer = XiangqiRecognizer(
-            board_model_path=str(BOARD_SEG_MODEL) if use_board else None,
-            pieces_model_path=str(PIECES_DET_MODEL),
-            use_board_detection=use_board,
-        )
+        recognizer = XiangqiRecognizer(items_model_path=str(ITEMS_MODEL))
     return recognizer
 
 
@@ -94,8 +88,7 @@ async def health_check():
     rec = get_recognizer()
     return HealthResponse(
         status="healthy",
-        board_model_loaded=rec.board_detector.model is not None,
-        pieces_model_loaded=rec.piece_detector.model is not None,
+        items_model_loaded=rec.item_detector.model is not None,
     )
 
 

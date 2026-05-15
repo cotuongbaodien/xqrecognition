@@ -25,6 +25,23 @@ from .board_detector import Grid
 from .piece_detector import DetectedPiece
 
 
+def render_fen_ascii(fen: str) -> str:
+    """Render a FEN string as a 10x9 ASCII board for visual inspection."""
+    rows = fen.split(' ')[0].split('/')
+    lines = ['   a b c d e f g h i', '  +-+-+-+-+-+-+-+-+-+']
+    for i, row in enumerate(rows):
+        cells = []
+        for ch in row:
+            if ch.isdigit():
+                cells.extend(['.'] * int(ch))
+            else:
+                cells.append(ch)
+        cells = cells[:9] + ['.'] * (9 - len(cells))
+        lines.append(f'{i} |' + '|'.join(cells) + '|')
+    lines.append('  +-+-+-+-+-+-+-+-+-+')
+    return '\n'.join(lines)
+
+
 @dataclass
 class BoardState:
     """Represents the state of a Xiangqi board."""

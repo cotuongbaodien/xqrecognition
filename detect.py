@@ -14,45 +14,21 @@ import cv2
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.settings import BOARD_SEG_MODEL, PIECES_DET_MODEL
+from config.settings import ITEMS_MODEL
 
 
 def detect_image(
     image_path: str,
     output_dir: str = None,
     visualize: bool = True,
-    board_model: str = None,
-    pieces_model: str = None,
-    confidence: float = 0.5,
-    use_board: bool = True,
+    items_model: str = None,
+    confidence: float = 0.3,
 ) -> dict:
-    """
-    Detect pieces in a single image.
-
-    Args:
-        image_path: Path to the image.
-        output_dir: Directory to save results.
-        visualize: Whether to save visualization.
-        board_model: Path to board model.
-        pieces_model: Path to pieces model.
-        confidence: Confidence threshold.
-        use_board: Whether to use board detection.
-
-    Returns:
-        Detection result dictionary.
-    """
+    """Detect pieces in a single image."""
     from src.pipeline import XiangqiRecognizer
 
-    # Initialize recognizer
-    board_path = board_model or str(BOARD_SEG_MODEL)
-    pieces_path = pieces_model or str(PIECES_DET_MODEL)
-
-    use_board = use_board and Path(board_path).exists()
-
     recognizer = XiangqiRecognizer(
-        board_model_path=board_path if use_board else None,
-        pieces_model_path=pieces_path,
-        use_board_detection=use_board,
+        items_model_path=items_model or str(ITEMS_MODEL),
     )
 
     # Run detection
@@ -90,10 +66,8 @@ def detect_directory(
     input_dir: str,
     output_dir: str = None,
     visualize: bool = True,
-    board_model: str = None,
-    pieces_model: str = None,
-    confidence: float = 0.5,
-    use_board: bool = True,
+    items_model: str = None,
+    confidence: float = 0.3,
 ) -> list:
     """
     Detect pieces in all images in a directory.
@@ -127,17 +101,10 @@ def detect_directory(
 
     print(f"Found {len(images)} images")
 
-    # Initialize recognizer
-    board_path = board_model or str(BOARD_SEG_MODEL)
-    pieces_path = pieces_model or str(PIECES_DET_MODEL)
-
-    use_board = use_board and Path(board_path).exists()
-
     recognizer = XiangqiRecognizer(
-        board_model_path=board_path if use_board else None,
-        pieces_model_path=pieces_path,
-        use_board_detection=use_board,
+        items_model_path=items_model or str(ITEMS_MODEL),
     )
+    from src.fen_generator import render_fen_ascii
 
     # Process images
     results = []
@@ -146,7 +113,7 @@ def detect_directory(
         output_dir.mkdir(parents=True, exist_ok=True)
 
     for i, image_path in enumerate(images, 1):
-        print(f"[{i}/{len(images)}] Processing: {image_path.name}")
+        print(f"\n[{i}/{len(images)}] Processing: {image_path.name}")
 
         try:
             result = recognizer.recognize(
@@ -161,6 +128,7 @@ def detect_directory(
 
             print(f"  FEN: {result.fen}")
             print(f"  Pieces: {len(result.pieces)}, Confidence: {result.confidence:.2f}")
+            print(render_fen_ascii(result.fen))
 
             # Save visualization
             if output_dir and visualize and result.visualization is not None:
@@ -190,19 +158,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Detect from single image
   python detect.py --image board.jpg
-
-  # Detect from directory
-  python detect.py --dir images/
-
-  # Save results to output directory
-  python detect.py --image board.jpg --output output/
-
-  # Disable board detection (faster, less accurate)
-  python detect.py --image board.jpg --no-board
-
-  # Custom confidence threshold
+  python detect.py --dir images/ --output output/
   python detect.py --image board.jpg --confidence 0.3
         """
     )
@@ -210,10 +167,8 @@ Examples:
     parser.add_argument("--image", type=str, help="Path to single image")
     parser.add_argument("--dir", type=str, help="Path to directory of images")
     parser.add_argument("--output", type=str, help="Output directory for results")
-    parser.add_argument("--board-model", type=str, help="Path to board segmentation model")
-    parser.add_argument("--pieces-model", type=str, help="Path to pieces detection model")
-    parser.add_argument("--confidence", type=float, default=0.5, help="Confidence threshold")
-    parser.add_argument("--no-board", action="store_true", help="Disable board detection")
+    parser.add_argument("--items-model", type=str, help="Path to items detection model")
+    parser.add_argument("--confidence", type=float, default=0.3, help="Confidence threshold")
     parser.add_argument("--no-visualize", action="store_true", help="Disable visualization")
 
     args = parser.parse_args()
@@ -224,12 +179,11 @@ Examples:
             args.image,
             output_dir=args.output,
             visualize=not args.no_visualize,
-            board_model=args.board_model,
-            pieces_model=args.pieces_model,
+            items_model=args.items_model,
             confidence=args.confidence,
-            use_board=not args.no_board,
         )
 
+        from src.fen_generator import render_fen_ascii
         print("\n" + "=" * 60)
         print("Detection Result")
         print("=" * 60)
@@ -237,9 +191,11 @@ Examples:
         print(f"FEN: {result.get('fen', 'N/A')}")
         print(f"Pieces detected: {result.get('piece_count', 0)}")
         print(f"Confidence: {result.get('confidence', 0):.2%}")
+        print()
+        print(render_fen_ascii(result.get('fen', '9/9/9/9/9/9/9/9/9/9')))
 
         if result.get('errors'):
-            print(f"Warnings: {', '.join(result['errors'])}")
+            print(f"\nWarnings: {', '.join(result['errors'])}")
 
     elif args.dir:
         # Directory detection
@@ -247,10 +203,8 @@ Examples:
             args.dir,
             output_dir=args.output,
             visualize=not args.no_visualize,
-            board_model=args.board_model,
-            pieces_model=args.pieces_model,
+            items_model=args.items_model,
             confidence=args.confidence,
-            use_board=not args.no_board,
         )
 
         # Summary

@@ -16,14 +16,10 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import (
-    BOARD_SEG_MODEL,
-    BOARD_DET_MODEL,
-    PIECES_DET_MODEL,
-    MODELS_DIR,
-    BOARD_CONFIDENCE_THRESHOLD,
+    ITEMS_MODEL,
     PIECE_CONFIDENCE_THRESHOLD,
 )
-from .board_detector import BoardDetector, BoardBoxDetector, LandmarkDetector, Grid
+from .board_detector import BoardDetector, Grid
 from .piece_detector import PieceDetector, DetectedPiece
 from .item_detector import ItemDetector
 from .fen_generator import FENGenerator, BoardState
@@ -62,75 +58,36 @@ class XiangqiRecognizer:
     """
     Main recognition pipeline for Xiangqi board images.
 
-    Combines:
-    - Board detection and grid construction
-    - Chess piece detection
-    - FEN notation generation
+    Uses a single unified model (items.pt) that detects both pieces (14 classes)
+    and board landmarks (4 classes) in one forward pass.
     """
 
-    def __init__(
-        self,
-        board_model_path: str = None,
-        board_det_model_path: str = None,
-        pieces_model_path: str = None,
-        use_board_detection: bool = True
-    ):
+    def __init__(self, items_model_path: str = None, **_legacy_kwargs):
         """
         Initialize the Xiangqi recognizer.
 
         Args:
-            board_model_path: Path to the board segmentation model (intersections).
-            board_det_model_path: Path to the board detection model (bounding box).
-            pieces_model_path: Path to the pieces detection model.
-            use_board_detection: Whether to use board detection for grid construction.
+            items_model_path: Path to the unified items detection model.
+                              Defaults to models/items.pt.
         """
-        self.use_board_detection = use_board_detection
-
-        # Initialize detectors
-        self.board_detector = BoardDetector()
-        self.board_box_detector = BoardBoxDetector()
-        self.landmark_detector = LandmarkDetector()
         self.item_detector = ItemDetector()
-        self.piece_detector = PieceDetector()
+        self.piece_detector = PieceDetector()  # utility (NMS + visualization only)
+        self.board_detector = BoardDetector()  # utility (grid drawing only)
         self.fen_generator = FENGenerator()
         self.rules_validator = RulesValidator()
 
-        # Load models
-        board_seg_path = board_model_path or str(BOARD_SEG_MODEL)
-        board_det_path = board_det_model_path or str(BOARD_DET_MODEL)
-        pieces_path = pieces_model_path or str(PIECES_DET_MODEL)
-        landmarks_path = str(MODELS_DIR / "landmarks.pt")
-        items_path = str(MODELS_DIR / "items.pt")
-
-        # Load item model (primary for landmarks)
-        if Path(items_path).exists():
-            self.item_detector.load_model(items_path)
-            print(f"Loaded item model from {items_path}")
-
-        # Load landmark model (legacy fallback)
-        if Path(landmarks_path).exists():
-            self.landmark_detector.load_model(landmarks_path)
-
-        # Load board segmentation model (fallback)
-        if Path(board_seg_path).exists():
-            self.board_detector.load_model(board_seg_path)
-
-        # Load board detection model (fallback)
-        if Path(board_det_path).exists():
-            self.board_box_detector.load_model(board_det_path)
-
-        # Load pieces model (required)
-        if Path(pieces_path).exists():
-            self.piece_detector.load_model(pieces_path)
-        else:
-            raise FileNotFoundError(f"Pieces model not found at {pieces_path}")
+        items_path = items_model_path or str(ITEMS_MODEL)
+        if not Path(items_path).exists():
+            raise FileNotFoundError(f"Items model not found at {items_path}")
+        self.item_detector.load_model(items_path)
+        print(f"Loaded items model from {items_path}")
 
     def recognize(
         self,
         image_path: str,
-        board_confidence: float = BOARD_CONFIDENCE_THRESHOLD,
         piece_confidence: float = PIECE_CONFIDENCE_THRESHOLD,
-        visualize: bool = False
+        visualize: bool = False,
+        **_legacy
     ) -> RecognitionResult:
         """
         Recognize the Xiangqi board from an image file.
@@ -150,7 +107,6 @@ class XiangqiRecognizer:
 
         return self.recognize_image(
             image,
-            board_confidence=board_confidence,
             piece_confidence=piece_confidence,
             visualize=visualize
         )
@@ -158,9 +114,9 @@ class XiangqiRecognizer:
     def recognize_image(
         self,
         image: np.ndarray,
-        board_confidence: float = BOARD_CONFIDENCE_THRESHOLD,
         piece_confidence: float = PIECE_CONFIDENCE_THRESHOLD,
-        visualize: bool = False
+        visualize: bool = False,
+        **_legacy
     ) -> RecognitionResult:
         """
         Recognize the Xiangqi board from an image array.
@@ -175,48 +131,24 @@ class XiangqiRecognizer:
             RecognitionResult object.
         """
         errors = []
-        grid = None
-        bbox = None
         h, w = image.shape[:2]
 
-        # Step 1: Detect pieces (using legacy pieces_det.pt - more piece data)
-        pieces = self.piece_detector.detect_pieces(image, confidence=piece_confidence)
-        pieces = self.piece_detector.non_max_suppression(pieces, iou_threshold=0.35)
+        # Single forward pass: pieces + landmarks from items.pt
+        item_result = self.item_detector.detect(image, confidence=piece_confidence)
 
+        pieces = self.piece_detector.non_max_suppression(
+            item_result.pieces, iou_threshold=0.35
+        )
         # Cap at max 32 pieces (maximum in Xiangqi)
         if len(pieces) > 32:
             pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)[:32]
 
-        # Step 2: Detect items (landmarks) for orientation/mirror later
-        item_result = None
-        if self.item_detector.model is not None:
-            item_result = self.item_detector.detect(image, confidence=0.3)
-
-        # Step 2a: Build grid from board box detection (most reliable for piece mapping)
-        if self.use_board_detection and self.board_box_detector.model is not None:
-            bbox = self.board_box_detector.detect_board(image, confidence=board_confidence)
-            if bbox is not None:
-                grid = self.board_detector.build_grid_from_bbox(bbox)
-            else:
-                errors.append("Board bounding box not detected")
-
-        # Step 2b: Fallback to item landmarks if board_det fails
-        if grid is None and item_result is not None:
-            grid = ItemDetector.build_grid_from_landmarks(
-                item_result, image_shape=(h, w)
-            )
-            if grid is None:
-                errors.append("Item detector: failed to build grid from landmarks")
-
-        # Step 2c: Fallback to YOLO intersection detection
-        if grid is None and self.board_detector.model is not None:
-            intersections = self.board_detector.detect_intersections(
-                image, confidence=board_confidence
-            )
-            if len(intersections) >= 50:
-                grid = self.board_detector.build_grid(intersections)
-            else:
-                errors.append(f"Only {len(intersections)} intersections detected")
+        # Build grid from landmarks (bilinear / homography / bbox fallback)
+        grid = ItemDetector.build_grid_from_landmarks(
+            item_result, image_shape=(h, w)
+        )
+        if grid is None:
+            errors.append("Failed to build grid from landmarks")
 
         # Step 3: Map pieces to grid
         if grid is not None:
@@ -344,27 +276,6 @@ class XiangqiRecognizer:
         return results
 
 
-def create_recognizer(
-    board_model: str = None,
-    board_det_model: str = None,
-    pieces_model: str = None,
-    use_board_detection: bool = True
-) -> XiangqiRecognizer:
-    """
-    Factory function to create a XiangqiRecognizer.
-
-    Args:
-        board_model: Path to board segmentation model.
-        board_det_model: Path to board detection model (bounding box).
-        pieces_model: Path to pieces detection model.
-        use_board_detection: Whether to use board detection.
-
-    Returns:
-        Configured XiangqiRecognizer instance.
-    """
-    return XiangqiRecognizer(
-        board_model_path=board_model,
-        board_det_model_path=board_det_model,
-        pieces_model_path=pieces_model,
-        use_board_detection=use_board_detection
-    )
+def create_recognizer(items_model: str = None) -> XiangqiRecognizer:
+    """Factory function to create a XiangqiRecognizer."""
+    return XiangqiRecognizer(items_model_path=items_model)
