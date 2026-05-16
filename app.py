@@ -14,12 +14,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from config.settings import ITEMS_MODEL
-from src.pipeline import XiangqiRecognizer
+from boarddetection import ITEMS_MODEL, XiangqiRecognizer
 
 
 # Initialize FastAPI app

@@ -12,34 +12,30 @@ Tài liệu này dành cho backend team để integrate nhận diện bàn cờ 
 
 ## Cài đặt
 
-### Bước 1: Copy file vào backend project
+### Bước 1: Copy folder `boarddetection/` vào backend project
 
-| Path | Mô tả | Bắt buộc |
-|---|---|---|
-| `src/` | Module Python (pipeline, item_detector, fen_generator, ...) | ✅ |
-| `config/` | Settings (class names, paths, FEN mapping) | ✅ |
-| `models/items.pt` | Trained model (~22MB) | ✅ |
-| `requirements.txt` | Dependencies | ✅ |
+Toàn bộ code + model nằm trong 1 folder `boarddetection/`. Copy nguyên folder
+vào backend project.
 
-Cấu trúc tối thiểu trong backend project:
 ```
 your_backend/
-├── xiangqi/                    ← Tạo folder này
-│   ├── src/
-│   │   ├── __init__.py
-│   │   ├── pipeline.py
-│   │   ├── item_detector.py
-│   │   ├── piece_detector.py
-│   │   ├── board_detector.py
-│   │   ├── fen_generator.py
-│   │   └── rules_validator.py
-│   ├── config/
-│   │   ├── __init__.py
-│   │   └── settings.py
-│   └── models/
-│       └── items.pt           ← Copy file model vào đây
+├── boarddetection/             ← Copy y nguyên folder này từ repo
+│   ├── __init__.py
+│   ├── pipeline.py
+│   ├── item_detector.py
+│   ├── piece_detector.py
+│   ├── board_detector.py
+│   ├── fen_generator.py
+│   ├── rules_validator.py
+│   ├── settings.py
+│   ├── models/
+│   │   └── items.pt           ← ~22MB, copy thủ công (gitignored)
+│   └── docs/
+│       └── INTEGRATION.md     ← File này
 └── your_app.py                ← Code backend của bạn
 ```
+
+**KHÔNG cần** copy YOLO/ultralytics — install qua pip ở bước 2.
 
 ### Bước 2: Install dependencies
 
@@ -62,10 +58,10 @@ torch>=2.0.0
 ### Cách dùng cơ bản
 
 ```python
-from xiangqi.src.pipeline import XiangqiRecognizer
+from boarddetection import XiangqiRecognizer
 
 # Khởi tạo 1 lần (load model ~5s, sau đó tái dùng)
-recognizer = XiangqiRecognizer(items_model_path="xiangqi/models/items.pt")
+recognizer = XiangqiRecognizer()  # auto-locates boarddetection/models/items.pt
 
 # Detect từ file path
 result = recognizer.recognize("path/to/board.jpg")
@@ -77,9 +73,9 @@ print(result.fen)
 
 ```python
 import cv2
-from xiangqi.src.pipeline import XiangqiRecognizer
+from boarddetection import XiangqiRecognizer
 
-recognizer = XiangqiRecognizer(items_model_path="xiangqi/models/items.pt")
+recognizer = XiangqiRecognizer()  # auto-locates boarddetection/models/items.pt
 
 image = cv2.imread("board.jpg")  # hoặc từ bytes/PIL/etc
 result = recognizer.recognize_image(image)
@@ -118,14 +114,14 @@ Tạo **1 instance** dùng chung cả app — tránh load model lại mỗi requ
 
 ```python
 # xiangqi_service.py
-from xiangqi.src.pipeline import XiangqiRecognizer
+from boarddetection import XiangqiRecognizer
 
 _recognizer = None
 
 def get_recognizer():
     global _recognizer
     if _recognizer is None:
-        _recognizer = XiangqiRecognizer(items_model_path="xiangqi/models/items.pt")
+        _recognizer = XiangqiRecognizer()  # auto-locates boarddetection/models/items.pt
     return _recognizer
 
 def detect_fen(image_or_path) -> str:
@@ -229,14 +225,18 @@ rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR
 
 1. **Mirror trái-phải**: bàn cờ đối xứng → đôi lúc FEN bị mirror. App consuming có thể tự xử lý nếu cần.
 2. **Board rotation 90°**: ảnh chụp board nằm ngang → FEN bị rotate. Bắt buộc chụp portrait.
-3. **Cold start ~5s**: load model lần đầu. Dùng pattern singleton để chỉ load 1 lần.
+3. **Cold start**: model load ~0.3s (cached) hoặc vài giây (lần đầu, download ultralytics deps). Dùng pattern singleton để chỉ load 1 lần.
 
 ### Performance
 
-| Hardware | Latency/ảnh |
-|---|---|
-| GPU (RTX 3060) | ~50-100ms |
-| CPU only | ~500ms-2s |
+Measured trên test/5.png (968×610 ảnh thật):
+
+| Hardware | Latency/ảnh | Throughput |
+|---|---|---|
+| GPU (RTX 3060) | **~17-20ms** | ~50 req/s/worker |
+| CPU only | ~500ms-2s | 0.5-2 req/s/worker |
+
+→ Backend không lo overload: 1 worker GPU xử lý ~200K req/giờ.
 
 ### Recommended error handling
 

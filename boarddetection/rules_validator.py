@@ -5,7 +5,7 @@ Validates and corrects board state based on Chinese Chess rules.
 
 from typing import List, Optional, Tuple, Dict
 from .fen_generator import BoardState
-from config.settings import GRID_COLS, GRID_ROWS
+from .settings import GRID_COLS, GRID_ROWS
 
 
 # Maximum number of each piece type

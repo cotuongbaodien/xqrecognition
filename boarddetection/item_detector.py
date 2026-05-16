@@ -22,13 +22,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from config.settings import (
+from .settings import (
     ITEM_CLASSES,
     PIECE_CLASS_IDS,
     LANDMARK_CLASS_IDS,
@@ -195,7 +189,7 @@ class ItemDetector:
         gives a homography that passes EXACTLY through those 4 points — no
         averaging with other constraints that could pull corners off-board.
         """
-        from config.settings import GRID_COLS, GRID_ROWS
+        from .settings import GRID_COLS, GRID_ROWS
         by_pos = {(c[0], c[1]): (c[2], c[3]) for c in corner_corrs}
         if not all(k in by_pos for k in [(0, 0), (8, 0), (0, 9), (8, 9)]):
             return None
@@ -229,7 +223,7 @@ class ItemDetector:
         """Build a Grid by bilinear interpolation between the 4 corner
         correspondences. Each corr is (col, row, x, y) where col,row ∈
         {(0,0),(8,0),(0,9),(8,9)}."""
-        from config.settings import GRID_COLS, GRID_ROWS
+        from .settings import GRID_COLS, GRID_ROWS
         by_pos = {(c[0], c[1]): (c[2], c[3]) for c in corner_corrs}
         if not all(k in by_pos for k in [(0, 0), (8, 0), (0, 9), (8, 9)]):
             return None
@@ -319,7 +313,7 @@ class ItemDetector:
         """Project the 9x10 lattice through H. Returns (Grid, score) or (None, None)
         if the resulting grid fails sanity checks. Score = lower is better
         (variance in cell sizes — uniform grids score lower)."""
-        from config.settings import GRID_COLS, GRID_ROWS
+        from .settings import GRID_COLS, GRID_ROWS
 
         if H is None:
             return None, None
@@ -469,7 +463,7 @@ class ItemDetector:
         2. 4 board-conner only → bilinear (legacy path, used when no palaces seen)
         3. >= 2 landmarks → bbox fallback (least accurate)
         """
-        from config.settings import GRID_COLS, GRID_ROWS
+        from .settings import GRID_COLS, GRID_ROWS
 
         # ---- Strategy 1: 4 board-corners → exact perspective transform ----
         # User insight: 4 board-corners define grid geometry. They enclose all

@@ -10,13 +10,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from config.settings import (
+from .settings import (
     GRID_COLS,
     GRID_ROWS,
     TOTAL_INTERSECTIONS,

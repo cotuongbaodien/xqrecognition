@@ -5,16 +5,11 @@ Provides command-line interface for detecting pieces and generating FEN from ima
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import cv2
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from config.settings import ITEMS_MODEL
+from boarddetection import ITEMS_MODEL
 
 
 def detect_image(
@@ -25,7 +20,7 @@ def detect_image(
     confidence: float = 0.3,
 ) -> dict:
     """Detect pieces in a single image."""
-    from src.pipeline import XiangqiRecognizer
+    from boarddetection import XiangqiRecognizer
 
     recognizer = XiangqiRecognizer(
         items_model_path=items_model or str(ITEMS_MODEL),
@@ -84,7 +79,7 @@ def detect_directory(
     Returns:
         List of detection results.
     """
-    from src.pipeline import XiangqiRecognizer
+    from boarddetection import XiangqiRecognizer
 
     input_dir = Path(input_dir)
     if not input_dir.exists():
@@ -104,7 +99,7 @@ def detect_directory(
     recognizer = XiangqiRecognizer(
         items_model_path=items_model or str(ITEMS_MODEL),
     )
-    from src.fen_generator import render_fen_ascii
+    from boarddetection import render_fen_ascii
 
     # Process images
     results = []
@@ -183,7 +178,7 @@ Examples:
             confidence=args.confidence,
         )
 
-        from src.fen_generator import render_fen_ascii
+        from boarddetection import render_fen_ascii
         print("\n" + "=" * 60)
         print("Detection Result")
         print("=" * 60)

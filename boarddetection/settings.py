@@ -1,27 +1,12 @@
 """
-Configuration settings for Xiangqi Recognition System.
+Configuration settings for boarddetection package.
 """
 
 from pathlib import Path
 
-# Project paths
-PROJECT_ROOT = Path(__file__).parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
-MODELS_DIR = PROJECT_ROOT / "models"
-DOWNLOAD_DIR = PROJECT_ROOT / "download"
-
-# Dataset paths
-BOARD_SEG_DATA = DATA_DIR / "board_seg"
-PIECES_DATA = DATA_DIR / "pieces"
-
-# Model paths
-BOARD_SEG_MODEL = MODELS_DIR / "board_seg.pt"    # Board segmentation (fallback)
-BOARD_DET_MODEL = MODELS_DIR / "board_det.pt"    # Board bounding box (primary)
-PIECES_DET_MODEL = MODELS_DIR / "pieces_det.pt"  # Pieces detection
-
-# Dataset zip files
-BOARD_SEG_ZIP = DOWNLOAD_DIR / "seg_chinese_chess.v3i.yolov8.zip"
-PIECES_DET_ZIP = DOWNLOAD_DIR / "Chinese-chess.v9i.yolov8.zip"
+# Package paths (boarddetection/ folder)
+PACKAGE_ROOT = Path(__file__).parent
+MODELS_DIR = PACKAGE_ROOT / "models"
 
 # Grid dimensions for Xiangqi board
 GRID_COLS = 9   # 0-8 (files a-i)
