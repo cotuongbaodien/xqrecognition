@@ -186,15 +186,31 @@ class ItemDetector:
             ]
 
         # Step 2: derive row axis DIRECTION
-        # Priority: line between 2 palace-centers (geometric, unaffected by
-        # piece movement). Fallback: image-y axis (standard portrait).
+        # Priority order:
+        # 1. Line between 2 palace-centers (geometric, palace-centers at col 4
+        #    rows 1 and 8, so line IS the row axis)
+        # 2. 4-corner bounding box aspect ratio. A Xiangqi board has 10 rows
+        #    × 9 cols, so the row axis is the LONGER dimension of the board.
+        #    Width > height → board is landscape → row axis is horizontal.
+        # 3. Default image-y (assume portrait)
         row_axis = np.array([0.0, 1.0])  # image-y default
         if palace_centers and len(palace_centers) >= 2:
             p1 = np.array(palace_centers[0].center, dtype=float)
             p2 = np.array(palace_centers[1].center, dtype=float)
             v = p2 - p1
-            if np.linalg.norm(v) > 100:  # meaningful separation (>1 cell)
+            if np.linalg.norm(v) > 100:
                 row_axis = v / np.linalg.norm(v)
+        else:
+            xs = [p[0] for p in extremes]
+            ys = [p[1] for p in extremes]
+            bbox_w = max(xs) - min(xs)
+            bbox_h = max(ys) - min(ys)
+            # Board has 10 rows × 9 cols → row axis aligns with the LONGER side.
+            # In image space:
+            #   - landscape (w > h): row axis is horizontal (image-x)
+            #   - portrait  (h > w): row axis is vertical (image-y)
+            if bbox_w > bbox_h:
+                row_axis = np.array([1.0, 0.0])
 
         # Step 3: use piece colors to determine SIGN (which end is row 9)
         red_pieces = [p for p in pieces if p.fen_symbol and p.fen_symbol.isupper()]
@@ -267,10 +283,12 @@ class ItemDetector:
                     t /= t[2]
                 grid_points[row, col] = [t[0], t[1]]
 
-        dx = grid_points[:, 1:, 0] - grid_points[:, :-1, 0]
-        dy = grid_points[1:, :, 1] - grid_points[:-1, :, 1]
-        cell_w = float(np.mean(np.abs(dx)))
-        cell_h = float(np.mean(np.abs(dy)))
+        # Euclidean cell size (works for rotated/perspective grids — X/Y
+        # component alone collapses to ~0 for a 90°-rotated board)
+        dx_vec = grid_points[:, 1:, :] - grid_points[:, :-1, :]
+        dy_vec = grid_points[1:, :, :] - grid_points[:-1, :, :]
+        cell_w = float(np.mean(np.linalg.norm(dx_vec, axis=2)))
+        cell_h = float(np.mean(np.linalg.norm(dy_vec, axis=2)))
         return Grid(points=grid_points, cell_width=cell_w, cell_height=cell_h)
 
     @staticmethod
@@ -382,10 +400,13 @@ class ItemDetector:
                     t /= t[2]
                 grid_points[row, col] = [t[0], t[1]]
 
-        dx = grid_points[:, 1:, 0] - grid_points[:, :-1, 0]
-        dy = grid_points[1:, :, 1] - grid_points[:-1, :, 1]
-        cell_w = float(np.mean(np.abs(dx)))
-        cell_h = float(np.mean(np.abs(dy)))
+        # Euclidean cell size (rotation-invariant)
+        dx_vec = grid_points[:, 1:, :] - grid_points[:, :-1, :]
+        dy_vec = grid_points[1:, :, :] - grid_points[:-1, :, :]
+        dx_norm = np.linalg.norm(dx_vec, axis=2)
+        dy_norm = np.linalg.norm(dy_vec, axis=2)
+        cell_w = float(np.mean(dx_norm))
+        cell_h = float(np.mean(dy_norm))
         if cell_w < 5 or cell_h < 5:
             return None, None
 
@@ -398,8 +419,7 @@ class ItemDetector:
                 if px < -mx or px > w_img + mx or py < -my or py > h_img + my:
                     return None, None
 
-        # Score: uniformity = variance of cell sizes (lower = more uniform = better)
-        score = float(np.var(np.abs(dx)) + np.var(np.abs(dy)))
+        score = float(np.var(dx_norm) + np.var(dy_norm))
         return Grid(points=grid_points, cell_width=cell_w, cell_height=cell_h), score
 
     @staticmethod
