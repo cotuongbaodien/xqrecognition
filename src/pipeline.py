@@ -198,7 +198,9 @@ class XiangqiRecognizer:
         # Step 6: Generate visualization
         visualization = None
         if visualize:
-            visualization = self._create_visualization(image, pieces, grid, board_state)
+            visualization = self._create_visualization(
+                image, pieces, grid, board_state, item_result
+            )
 
         return RecognitionResult(
             fen=fen,
@@ -216,7 +218,8 @@ class XiangqiRecognizer:
         image: np.ndarray,
         pieces: List[DetectedPiece],
         grid: Optional[Grid],
-        board_state: BoardState
+        board_state: BoardState,
+        item_result=None,
     ) -> np.ndarray:
         """Create a visualization of the detection results."""
         vis = image.copy()
@@ -225,6 +228,26 @@ class XiangqiRecognizer:
             vis = self.board_detector.visualize_grid(vis, grid)
 
         vis = self.piece_detector.visualize_detections(vis, pieces)
+
+        # Draw landmark detections with distinct colors per class
+        if item_result is not None:
+            landmark_colors = {
+                "board-conner":  (255, 255, 0),    # cyan
+                "palace-center": (255, 0, 255),    # magenta
+                "palace-conner": (0, 255, 255),    # yellow
+                "palace-bottom": (255, 128, 0),    # orange
+            }
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            for name, color in landmark_colors.items():
+                for lm in item_result.get_landmarks(name):
+                    x1, y1, x2, y2 = map(int, lm.bbox)
+                    cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
+                    label = f"{name[:4]}.{name.split('-')[1][:3]} {lm.confidence:.2f}"
+                    (tw, th), _ = cv2.getTextSize(label, font, 0.4, 1)
+                    cv2.rectangle(vis, (x1, y2), (x1 + tw + 4, y2 + th + 6),
+                                  color, -1)
+                    cv2.putText(vis, label, (x1 + 2, y2 + th + 2),
+                                font, 0.4, (0, 0, 0), 1)
 
         # Add FEN text
         fen = self.fen_generator.generate_fen(board_state)

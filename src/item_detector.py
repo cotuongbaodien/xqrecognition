@@ -149,52 +149,78 @@ class ItemDetector:
     }
 
     @staticmethod
-    def _infer_missing_board_corners(
+    def _find_4_board_corners(
         detected_corners: List["Landmark"],
         pieces: List[DetectedPiece],
-        ref_center: Tuple[float, float],
     ) -> List[Tuple[float, float, float, float]]:
-        """A Xiangqi board has exactly 4 board-corners. Missing ones are
-        always occluded by a piece — and that piece is the outermost piece
-        in the corresponding diagonal direction. So:
-        - TL missing → piece with smallest (x+y)
-        - TR missing → piece with largest (x-y)
-        - BL missing → piece with smallest (x-y)
-        - BR missing → piece with largest (x+y)
+        """Find the 4 board-corners. User insight:
 
-        Returns proxy correspondences for the missing corners.
+        > "4 board conner nối lại với nhau sẽ bao hết quân cờ — nó nằm ngoài rìa hết"
+
+        The 4 corners ENCLOSE all pieces. So the 4 extreme points of (pieces +
+        detected board-conners), measured by (x±y), ARE the 4 board-corners.
+
+        Why combine pieces with detected corners:
+        - When all 4 corners detected accurately: they are the extremes anyway
+        - When a corner is occluded: the occluding piece sits at it, so the
+          piece IS the corner
+        - When a corner is detected as a false positive (inside the board):
+          the actual outermost piece in that direction overrides it
+
+        Returns 4 correspondences: (0,0)→TL, (8,0)→TR, (0,9)→BL, (8,9)→BR.
+        Returns [] if no candidates available.
         """
-        if len(detected_corners) >= 4 or not pieces:
+        candidates = [p.center for p in pieces]
+        candidates += [l.center for l in detected_corners]
+        if not candidates:
             return []
+        tl = min(candidates, key=lambda p: p[0] + p[1])
+        br = max(candidates, key=lambda p: p[0] + p[1])
+        tr = max(candidates, key=lambda p: p[0] - p[1])
+        bl = min(candidates, key=lambda p: p[0] - p[1])
+        return [
+            (0, 0, tl[0], tl[1]),
+            (8, 0, tr[0], tr[1]),
+            (0, 9, bl[0], bl[1]),
+            (8, 9, br[0], br[1]),
+        ]
 
-        cx, cy = ref_center
-        # Classify each detected corner by quadrant relative to ref center
-        filled = set()
-        for c in detected_corners:
-            x, y = c.center
-            if x < cx and y < cy:
-                filled.add("TL")
-            elif x >= cx and y < cy:
-                filled.add("TR")
-            elif x < cx and y >= cy:
-                filled.add("BL")
-            else:
-                filled.add("BR")
+    @staticmethod
+    def _grid_from_4_corners(
+        corner_corrs: List[Tuple[float, float, float, float]],
+        image_shape: Optional[Tuple[int, int]] = None,
+    ) -> Optional[Grid]:
+        """Build a Grid using exact perspective transform from 4 corners.
+        With exactly 4 point correspondences, cv2.getPerspectiveTransform
+        gives a homography that passes EXACTLY through those 4 points — no
+        averaging with other constraints that could pull corners off-board.
+        """
+        from config.settings import GRID_COLS, GRID_ROWS
+        by_pos = {(c[0], c[1]): (c[2], c[3]) for c in corner_corrs}
+        if not all(k in by_pos for k in [(0, 0), (8, 0), (0, 9), (8, 9)]):
+            return None
+        # Source: grid coords (col, row); destination: image coords
+        src = np.array([[0, 0], [8, 0], [0, 9], [8, 9]], dtype=np.float32)
+        dst = np.array([by_pos[(0, 0)], by_pos[(8, 0)],
+                        by_pos[(0, 9)], by_pos[(8, 9)]], dtype=np.float32)
+        try:
+            H = cv2.getPerspectiveTransform(src, dst)
+        except cv2.error:
+            return None
 
-        QUADRANTS = {
-            "TL": ((0, 0), lambda p: p.center[0] + p.center[1], min),
-            "TR": ((8, 0), lambda p: p.center[0] - p.center[1], max),
-            "BL": ((0, 9), lambda p: p.center[0] - p.center[1], min),
-            "BR": ((8, 9), lambda p: p.center[0] + p.center[1], max),
-        }
+        grid_points = np.zeros((GRID_ROWS, GRID_COLS, 2))
+        for row in range(GRID_ROWS):
+            for col in range(GRID_COLS):
+                t = H @ np.array([col, row, 1.0])
+                if t[2] != 0:
+                    t /= t[2]
+                grid_points[row, col] = [t[0], t[1]]
 
-        proxies = []
-        for q, ((col, row), key_fn, extreme) in QUADRANTS.items():
-            if q in filled:
-                continue
-            piece = extreme(pieces, key=key_fn)
-            proxies.append((col, row, piece.center[0], piece.center[1]))
-        return proxies
+        dx = grid_points[:, 1:, 0] - grid_points[:, :-1, 0]
+        dy = grid_points[1:, :, 1] - grid_points[:-1, :, 1]
+        cell_w = float(np.mean(np.abs(dx)))
+        cell_h = float(np.mean(np.abs(dy)))
+        return Grid(points=grid_points, cell_width=cell_w, cell_height=cell_h)
 
     @staticmethod
     def _build_bilinear_from_corners(
@@ -398,14 +424,13 @@ class ItemDetector:
 
         correspondences: List[Tuple[float, float, float, float]] = []
 
-        # palace-center: single column (col 4); split by Y into top (row 1) / bottom (row 8)
+        # palace-center: col 4; split by Y into top (row 1) / bottom (row 8)
         for l in palace_centers:
             x, y = l.center
             correspondences.append((4, 1 if y < cy_ref else 8, x, y))
 
         def pair_by_y_then_x(landmarks, cols, rows):
-            """Split landmarks into top/bottom by Y, then within each half assign
-            leftmost → cols[0], rightmost → cols[1] by X. Robust to lopsided refs."""
+            """Split landmarks into top/bottom by Y, then leftmost→cols[0], rightmost→cols[1]."""
             if not landmarks:
                 return
             top, bot = [], []
@@ -416,8 +441,6 @@ class ItemDetector:
                     continue
                 group = sorted(group, key=lambda l: l.center[0])
                 if len(group) == 1:
-                    # Single detection: classify by X relative to mean of group's row
-                    # When ambiguous, default to leftmost col
                     l = group[0]
                     correspondences.append((cols[0], row, l.center[0], l.center[1]))
                 else:
@@ -448,60 +471,17 @@ class ItemDetector:
         """
         from config.settings import GRID_COLS, GRID_ROWS
 
-        # ---- Strategy 1: 2-pass inference + homography ----
-        # User insight: every Xiangqi board has fixed landmark counts (4-4-4-2).
-        # Missing ones are occluded by pieces. We can recover them in 2 passes:
-        #   Pass 1: infer board-corners from extreme pieces (works without any
-        #           prior grid because corners are always at piece extremes)
-        #   Pass 2: build rough bilinear grid from 4 corners, then for each
-        #           expected palace landmark not detected, find piece sitting
-        #           on it and use as proxy.
-        landmark_corrs = ItemDetector._collect_correspondences(result)
-
-        ref_pts = [l.center for lst in result.landmarks_by_class.values() for l in lst]
-        if not ref_pts:
-            ref_pts = [p.center for p in result.pieces]
-        if ref_pts:
-            ref_cx = sum(p[0] for p in ref_pts) / len(ref_pts)
-            ref_cy = sum(p[1] for p in ref_pts) / len(ref_pts)
-        elif image_shape is not None:
-            ref_cy, ref_cx = image_shape[0] / 2, image_shape[1] / 2
-        else:
-            ref_cx = ref_cy = 0
-
-        proxy_corners = ItemDetector._infer_missing_board_corners(
+        # ---- Strategy 1: 4 board-corners → exact perspective transform ----
+        # User insight: 4 board-corners define grid geometry. They enclose all
+        # pieces and form the 4 grid corners. Use cv2.getPerspectiveTransform
+        # so the grid passes through EXACTLY these 4 points (no averaging
+        # with palace landmarks that would pull corners off-board).
+        corner_corrs = ItemDetector._find_4_board_corners(
             ItemDetector._dedupe_landmarks(result.board_corners),
             result.pieces,
-            (ref_cx, ref_cy),
         )
-
-        all_corrs = landmark_corrs + proxy_corners
-
-        # Pass 2: if we have ≥4 correspondences forming corners, use the rough
-        # grid to find piece-proxies for missing palace landmarks
-        proxy_palace = []
-        if all_corrs:
-            corner_corrs = [c for c in all_corrs
-                            if (c[0], c[1]) in {(0, 0), (8, 0), (0, 9), (8, 9)}]
-            if len(corner_corrs) == 4:
-                rough = ItemDetector._build_bilinear_from_corners(corner_corrs)
-                if rough is not None:
-                    detected_keys = ItemDetector._assign_landmarks_to_positions(
-                        result, rough
-                    )
-                    proxy_palace = ItemDetector._piece_proxy_correspondences(
-                        result.pieces, rough, detected_keys
-                    )
-                    # Filter proxies: skip if proxy piece is very close to a
-                    # detected landmark (avoids double-counting)
-                    proxy_palace = [
-                        p for p in proxy_palace
-                        if (p[0], p[1]) not in {(c[0], c[1]) for c in all_corrs}
-                    ]
-
-        all_corrs = all_corrs + proxy_palace
-        if len(all_corrs) >= 4:
-            grid = ItemDetector._best_homography_grid(all_corrs, image_shape)
+        if len(corner_corrs) == 4:
+            grid = ItemDetector._grid_from_4_corners(corner_corrs, image_shape)
             if grid is not None:
                 return grid
 
