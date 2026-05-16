@@ -146,38 +146,95 @@ class ItemDetector:
     def _find_4_board_corners(
         detected_corners: List["Landmark"],
         pieces: List[DetectedPiece],
+        palace_centers: Optional[List["Landmark"]] = None,
     ) -> List[Tuple[float, float, float, float]]:
-        """Find the 4 board-corners. User insight:
+        """Find the 4 board-corners AND assign each to its board (col, row)
+        based on detected orientation. User insight:
 
         > "4 board conner nối lại với nhau sẽ bao hết quân cờ — nó nằm ngoài rìa hết"
 
-        The 4 corners ENCLOSE all pieces. So the 4 extreme points of (pieces +
-        detected board-conners), measured by (x±y), ARE the 4 board-corners.
+        Step 1 — 4 extreme image points of (pieces + detected corners) by (x±y)
+        ARE the 4 board corners. Handles occlusion (piece at corner) AND false
+        positives (real outermost piece overrides bad detection).
 
-        Why combine pieces with detected corners:
-        - When all 4 corners detected accurately: they are the extremes anyway
-        - When a corner is occluded: the occluding piece sits at it, so the
-          piece IS the corner
-        - When a corner is detected as a false positive (inside the board):
-          the actual outermost piece in that direction overrides it
+        Step 2 — assign (col, row) using piece-color orientation. Standard FEN:
+        red is at row 9, black at row 0. The vector from black-centroid to
+        red-centroid is the row axis (row 0 → row 9). Projecting each extreme
+        onto row/col axes recovers (col, row) for any board rotation
+        (0°, 90° CW, 90° CCW, 180°) without assuming image-y = row axis.
 
-        Returns 4 correspondences: (0,0)→TL, (8,0)→TR, (0,9)→BL, (8,9)→BR.
-        Returns [] if no candidates available.
+        Falls back to standard portrait assumption if either color is missing.
         """
         candidates = [p.center for p in pieces]
         candidates += [l.center for l in detected_corners]
         if not candidates:
             return []
+
+        # Step 1: find 4 image extremes
         tl = min(candidates, key=lambda p: p[0] + p[1])
         br = max(candidates, key=lambda p: p[0] + p[1])
         tr = max(candidates, key=lambda p: p[0] - p[1])
         bl = min(candidates, key=lambda p: p[0] - p[1])
-        return [
-            (0, 0, tl[0], tl[1]),
-            (8, 0, tr[0], tr[1]),
-            (0, 9, bl[0], bl[1]),
-            (8, 9, br[0], br[1]),
-        ]
+        extremes = [tl, tr, bl, br]
+
+        def standard_portrait():
+            return [
+                (0, 0, tl[0], tl[1]),
+                (8, 0, tr[0], tr[1]),
+                (0, 9, bl[0], bl[1]),
+                (8, 9, br[0], br[1]),
+            ]
+
+        # Step 2: derive row axis DIRECTION
+        # Priority: line between 2 palace-centers (geometric, unaffected by
+        # piece movement). Fallback: image-y axis (standard portrait).
+        row_axis = np.array([0.0, 1.0])  # image-y default
+        if palace_centers and len(palace_centers) >= 2:
+            p1 = np.array(palace_centers[0].center, dtype=float)
+            p2 = np.array(palace_centers[1].center, dtype=float)
+            v = p2 - p1
+            if np.linalg.norm(v) > 100:  # meaningful separation (>1 cell)
+                row_axis = v / np.linalg.norm(v)
+
+        # Step 3: use piece colors to determine SIGN (which end is row 9)
+        red_pieces = [p for p in pieces if p.fen_symbol and p.fen_symbol.isupper()]
+        black_pieces = [p for p in pieces if p.fen_symbol and p.fen_symbol.islower()]
+
+        # If both colors detected with meaningful separation along row_axis,
+        # flip row_axis to point toward red side.
+        if len(red_pieces) >= 2 and len(black_pieces) >= 2:
+            red_c = np.array([
+                sum(p.center[0] for p in red_pieces) / len(red_pieces),
+                sum(p.center[1] for p in red_pieces) / len(red_pieces),
+            ])
+            black_c = np.array([
+                sum(p.center[0] for p in black_pieces) / len(black_pieces),
+                sum(p.center[1] for p in black_pieces) / len(black_pieces),
+            ])
+            sep = np.dot(red_c - black_c, row_axis)
+            if abs(sep) < 30:  # too small along this axis → ambiguous, keep default
+                pass
+            elif sep < 0:  # red is on the negative side → flip
+                row_axis = -row_axis
+
+        col_axis = np.array([row_axis[1], -row_axis[0]])
+
+        cx = sum(p[0] for p in extremes) / 4
+        cy = sum(p[1] for p in extremes) / 4
+
+        correspondences = []
+        for x, y in extremes:
+            v = np.array([x - cx, y - cy])
+            row_proj = float(np.dot(v, row_axis))
+            col_proj = float(np.dot(v, col_axis))
+            row = 9 if row_proj > 0 else 0
+            col = 8 if col_proj > 0 else 0
+            correspondences.append((col, row, x, y))
+
+        seen = {(c[0], c[1]) for c in correspondences}
+        if len(seen) != 4:
+            return standard_portrait()
+        return correspondences
 
     @staticmethod
     def _grid_from_4_corners(
@@ -473,6 +530,7 @@ class ItemDetector:
         corner_corrs = ItemDetector._find_4_board_corners(
             ItemDetector._dedupe_landmarks(result.board_corners),
             result.pieces,
+            palace_centers=ItemDetector._dedupe_landmarks(result.palace_centers),
         )
         if len(corner_corrs) == 4:
             grid = ItemDetector._grid_from_4_corners(corner_corrs, image_shape)
