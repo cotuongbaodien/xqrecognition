@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from ultralytics import YOLO
-from config.settings import MODELS_DIR
+from boarddetection.settings import MODELS_DIR
 
 
 def train_items(
@@ -50,15 +50,15 @@ def train_items(
         name=name,
         exist_ok=False,
         seed=seed,
-        # Augmentation - aggressive since dataset is small (153 images)
-        flipud=0.0,            # Don't flip vertically (pieces have orientation)
-        fliplr=0.5,            # Horizontal flip ok (board is symmetric)
-        degrees=10.0,          # Mild rotation
-        perspective=0.0005,
+        # Augmentation — generous since users photograph from arbitrary angles
+        flipud=0.0,            # Don't flip vertically (chars would be upside-down)
+        fliplr=0.5,            # Horizontal flip ok (board is left-right symmetric)
+        degrees=45.0,          # Rotation up to ±45° (covers most camera tilts)
+        perspective=0.0015,    # Stronger perspective distortion
         hsv_h=0.02,
         hsv_s=0.4,
         hsv_v=0.4,
-        scale=0.4,
+        scale=0.5,             # Scale variation
         translate=0.1,
         mosaic=1.0,
         mixup=0.1,

@@ -231,6 +231,7 @@ class XiangqiRecognizer:
                 "palace-center": (255, 0, 255),    # magenta
                 "palace-conner": (0, 255, 255),    # yellow
                 "palace-bottom": (255, 128, 0),    # orange
+                "board-border":  (128, 255, 128),  # light green (v6+)
             }
             font = cv2.FONT_HERSHEY_SIMPLEX
             for name, color in landmark_colors.items():

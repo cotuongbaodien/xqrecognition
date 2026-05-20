@@ -68,6 +68,12 @@ class ItemDetectionResult:
     def palace_centers(self) -> List[Landmark]:
         return self.get_landmarks("palace-center")
 
+    @property
+    def board_borders(self) -> List[Landmark]:
+        """26 grid-perimeter points (v6+). Combined with board_corners and
+        palace_bottoms, gives full 34-point board outline."""
+        return self.get_landmarks("board-border")
+
 
 class ItemDetector:
     """
@@ -147,26 +153,36 @@ class ItemDetector:
         detected_corners: List["Landmark"],
         pieces: List[DetectedPiece],
         palace_centers: Optional[List["Landmark"]] = None,
+        palace_bottoms: Optional[List["Landmark"]] = None,
+        board_borders: Optional[List["Landmark"]] = None,
     ) -> List[Tuple[float, float, float, float]]:
-        """Find the 4 board-corners AND assign each to its board (col, row)
-        based on detected orientation. User insight:
+        """Find the 4 board-corners AND assign each to its board (col, row).
 
-        > "4 board conner nối lại với nhau sẽ bao hết quân cờ — nó nằm ngoài rìa hết"
+        Priority for corner candidates (most reliable first):
 
-        Step 1 — 4 extreme image points of (pieces + detected corners) by (x±y)
-        ARE the 4 board corners. Handles occlusion (piece at corner) AND false
-        positives (real outermost piece overrides bad detection).
+        1. **Perimeter landmarks** (board-conner + palace-bottom + board-border)
+           if we have ≥8 points. All 34 perimeter grid intersections lie on
+           the board boundary, so the 4 extremes of perimeter detections
+           directly give the 4 board corners. Robust to occlusion (we expect
+           15-30 of 34 to be visible in any game state).
+        2. **Pieces + corners** fallback when perimeter is sparse. The 4
+           extreme pieces are at or near the board corners.
 
-        Step 2 — assign (col, row) using piece-color orientation. Standard FEN:
-        red is at row 9, black at row 0. The vector from black-centroid to
-        red-centroid is the row axis (row 0 → row 9). Projecting each extreme
-        onto row/col axes recovers (col, row) for any board rotation
-        (0°, 90° CW, 90° CCW, 180°) without assuming image-y = row axis.
-
-        Falls back to standard portrait assumption if either color is missing.
+        Step 2 — assign (col, row) using piece-color orientation and palace
+        landmarks. Standard FEN: red at row 9, black at row 0. Vector from
+        black-centroid to red-centroid is the row axis.
         """
+        # Combine pieces + all perimeter landmarks. Pieces matter in starting
+        # positions (chariots at corners). Perimeter landmarks matter when
+        # corners are occluded (mid-game) — board-border points along the
+        # edges extend the convex hull to the actual board boundary.
         candidates = [p.center for p in pieces]
-        candidates += [l.center for l in detected_corners]
+        if detected_corners:
+            candidates.extend([l.center for l in detected_corners])
+        if palace_bottoms:
+            candidates.extend([l.center for l in palace_bottoms])
+        if board_borders:
+            candidates.extend([l.center for l in board_borders])
         if not candidates:
             return []
 
@@ -551,6 +567,8 @@ class ItemDetector:
             ItemDetector._dedupe_landmarks(result.board_corners),
             result.pieces,
             palace_centers=ItemDetector._dedupe_landmarks(result.palace_centers),
+            palace_bottoms=ItemDetector._dedupe_landmarks(result.palace_bottoms),
+            board_borders=ItemDetector._dedupe_landmarks(result.board_borders),
         )
         if len(corner_corrs) == 4:
             grid = ItemDetector._grid_from_4_corners(corner_corrs, image_shape)

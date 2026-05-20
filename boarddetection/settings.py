@@ -25,6 +25,8 @@ BOARD_SEG_CLASSES = {
 # Used by models/items.pt
 # =============================================================
 ITEM_CLASSES = {
+    # IDs match Roboflow v6+ alphabetical ordering — board-border at 7 shifts
+    # other landmarks +1 from old (v3-v5) numbering.
     0:  ("black-advisor",  "a"),
     1:  ("black-cannon",   "c"),
     2:  ("black-chariot",  "r"),
@@ -32,17 +34,18 @@ ITEM_CLASSES = {
     4:  ("black-general",  "k"),
     5:  ("black-horse",    "n"),
     6:  ("black-soldier",  "p"),
-    7:  ("board-conner",   None),
-    8:  ("palace-bottom",  None),
-    9:  ("palace-center",  None),
-    10: ("palace-conner",  None),
-    11: ("red-advisor",    "A"),
-    12: ("red-cannon",     "C"),
-    13: ("red-chariot",    "R"),
-    14: ("red-elephant",   "B"),
-    15: ("red-general",    "K"),
-    16: ("red-horse",      "N"),
-    17: ("red-soldier",    "P"),
+    7:  ("board-border",   None),   # NEW v6+: 26 perimeter grid points
+    8:  ("board-conner",   None),
+    9:  ("palace-bottom",  None),
+    10: ("palace-center",  None),
+    11: ("palace-conner",  None),
+    12: ("red-advisor",    "A"),
+    13: ("red-cannon",     "C"),
+    14: ("red-chariot",    "R"),
+    15: ("red-elephant",   "B"),
+    16: ("red-general",    "K"),
+    17: ("red-horse",      "N"),
+    18: ("red-soldier",    "P"),
 }
 
 # Piece / landmark ID sets for ItemDetector
@@ -52,10 +55,11 @@ ITEM_CLASS_NAMES = [ITEM_CLASSES[i][0] for i in range(len(ITEM_CLASSES))]
 
 # Landmark class name → ID
 LANDMARK_NAMES = {
-    "board-conner":  7,
-    "palace-bottom": 8,
-    "palace-center": 9,
-    "palace-conner": 10,
+    "board-border":  7,
+    "board-conner":  8,
+    "palace-bottom": 9,
+    "palace-center": 10,
+    "palace-conner": 11,
 }
 
 # =============================================================

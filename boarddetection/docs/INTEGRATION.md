@@ -6,8 +6,10 @@ Tài liệu này dành cho backend team để integrate nhận diện bàn cờ 
 
 Đây là Python module: input ảnh (numpy array hoặc file path) → output FEN string.
 
-- 1 model YOLO (`items.pt`) detect 18 classes (14 quân + 4 landmarks)
-- Pipeline: detect → dựng grid 9x10 từ board-corners → map quân vào ô → FEN
+- 1 model YOLO (`items.pt`) detect 19 classes (14 quân + 5 landmark types)
+  - v3-v5: 18 classes (no board-border) — backward compat
+  - v6+: 19 classes (added board-border for robust board outline)
+- Pipeline: detect → dựng grid 9x10 từ board corners + perimeter → map quân vào ô → FEN
 - Không cần REST API, không cần spawn server riêng — gọi như Python function
 
 ## Cài đặt

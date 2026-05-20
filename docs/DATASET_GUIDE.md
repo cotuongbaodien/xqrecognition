@@ -1,31 +1,34 @@
 # Hướng dẫn chuẩn bị dataset mới
 
-## Class names chuẩn (18 classes)
+## Class names chuẩn (19 classes — từ v6 trở đi)
 
-Theo `data/itemdetection.yolov8.zip`. **TẤT CẢ data mới phải dùng đúng tên này**:
+**TẤT CẢ data mới phải dùng đúng tên + ID này**:
 
 ```yaml
-nc: 18
-names:
-  0: black-advisor    # Sĩ đen
-  1: black-cannon     # Pháo đen
-  2: black-chariot    # Xe đen
-  3: black-elephant   # Tượng đen
-  4: black-general    # Tướng đen
-  5: black-horse      # Mã đen
-  6: black-soldier    # Tốt đen
-  7: board-conner     # Góc bàn cờ (4 góc)
-  8: palace-bottom    # Góc cung phía rìa bàn (cùng hàng góc bàn)
-  9: palace-center    # Tâm cung (chỗ X giao nhau)
-  10: palace-conner   # Góc cung phía trong bàn (sâu 2 hàng)
-  11: red-advisor     # Sĩ đỏ
-  12: red-cannon      # Pháo đỏ
-  13: red-chariot     # Xe đỏ
-  14: red-elephant    # Tượng đỏ
-  15: red-general     # Tướng đỏ
-  16: red-horse       # Mã đỏ
-  17: red-soldier     # Tốt đỏ
+nc: 19
+names:  # alphabetical (Roboflow's default export order)
+  0:  black-advisor    # Sĩ đen
+  1:  black-cannon     # Pháo đen
+  2:  black-chariot    # Xe đen
+  3:  black-elephant   # Tượng đen
+  4:  black-general    # Tướng đen
+  5:  black-horse      # Mã đen
+  6:  black-soldier    # Tốt đen
+  7:  board-border     # 26 điểm grid perimeter (MỚI v6+)
+  8:  board-conner     # 4 góc bàn cờ
+  9:  palace-bottom    # Góc cung phía rìa (4 điểm)
+  10: palace-center    # Tâm cung X (2 điểm)
+  11: palace-conner    # Góc cung trong (4 điểm)
+  12: red-advisor      # Sĩ đỏ
+  13: red-cannon       # Pháo đỏ
+  14: red-chariot      # Xe đỏ
+  15: red-elephant     # Tượng đỏ
+  16: red-general      # Tướng đỏ
+  17: red-horse        # Mã đỏ
+  18: red-soldier      # Tốt đỏ
 ```
+
+**Note compatibility**: model v5- (18 classes) vẫn chạy được. Code tự fallback khi không có board-border detections. Nhưng để fix orientation/rotation cho real photos, dùng v6+ với class 18.
 
 ## Các landmark cần label
 
@@ -48,7 +51,25 @@ names:
 - Cung trên: row 1 col 4
 - Cung dưới: row 8 col 4
 
-## Tổng số label/ảnh đầy đủ
+### `board-border` (26 điểm/bàn cờ — MỚI từ v6)
+
+**26 điểm grid perimeter** KHÔNG trùng với board-conner và palace-bottom.
+
+Cụ thể vị trí trên grid 9×10:
+
+| Cạnh | Cells cần label | Số điểm |
+|------|---|---|
+| Top edge (row 0) | col 1, 2, 4, 6, 7 | 5 |
+| Bottom edge (row 9) | col 1, 2, 4, 6, 7 | 5 |
+| Left edge (col 0) | row 1, 2, 3, 4, 5, 6, 7, 8 | 8 |
+| Right edge (col 8) | row 1, 2, 3, 4, 5, 6, 7, 8 | 8 |
+| **Tổng** | | **26** |
+
+(Top/Bottom đã bỏ cols 0, 8 vì là board-conner; bỏ cols 3, 5 vì là palace-bottom; col 4 là king position nhưng vẫn label là border vì nó là grid intersection.)
+
+**Quan trọng**: label ĐÈ LÊN quân cờ nếu quân che điểm border. Đây là geometric grid intersections, luôn tồn tại trên board dù có quân hay không.
+
+## Tổng số label/ảnh đầy đủ (v6+)
 
 | Loại | Số instances |
 |------|--------------|
@@ -57,7 +78,10 @@ names:
 | palace-bottom | 4 (2 cho mỗi cung) |
 | palace-conner | 4 (2 cho mỗi cung) |
 | palace-center | 2 |
-| **Tổng** | **46 instances/ảnh** |
+| **board-border** | **26** (new) |
+| **Tổng** | **72 instances/ảnh** (đầu ván) |
+
+Mid-game: pieces ít hơn (10-25) nhưng landmarks giữ nguyên 40 instances → tổng ~50-65/ảnh.
 
 ## Tools để label
 

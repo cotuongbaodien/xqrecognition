@@ -1,15 +1,22 @@
-"""Split data/items_v3/train/ into train/valid/test 80/15/5 with seed=42."""
+"""Split data/items_v{N}/train/ into train/valid/test 80/15/5 with seed=42."""
 
+import argparse
 import random
 import shutil
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent / "data" / "items_v3"
+parser = argparse.ArgumentParser()
+parser.add_argument("--dir", default="data/items_v4")
+args = parser.parse_args()
+
+ROOT = Path(__file__).parent.parent / args.dir
 
 CLASSES = [
+    # v6+ alphabetical order (matches Roboflow export)
     "black-advisor", "black-cannon", "black-chariot", "black-elephant",
     "black-general", "black-horse", "black-soldier",
-    "board-conner", "palace-bottom", "palace-center", "palace-conner",
+    "board-border", "board-conner",
+    "palace-bottom", "palace-center", "palace-conner",
     "red-advisor", "red-cannon", "red-chariot", "red-elephant",
     "red-general", "red-horse", "red-soldier",
 ]
@@ -68,7 +75,7 @@ def main():
         "train: train/images\n"
         "val: valid/images\n"
         "test: test/images\n\n"
-        "nc: 18\n"
+        f"nc: {len(CLASSES)}\n"
         "names:\n"
     )
     for i, name in enumerate(CLASSES):
