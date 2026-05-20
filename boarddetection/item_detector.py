@@ -187,6 +187,14 @@ class ItemDetector:
             qx, qy = ax + t * dx, ay + t * dy
             return ((p[0] - qx) ** 2 + (p[1] - qy) ** 2) ** 0.5
 
+        # Distance threshold: 8% of bounding-box diagonal. Tight enough to
+        # reject interior pieces (>1 cell deep), loose enough to catch
+        # corner pieces and perimeter landmarks slightly off the rough edge.
+        xs = [p[0] for p in perimeter]
+        ys = [p[1] for p in perimeter]
+        diag = ((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) ** 0.5
+        threshold = diag * 0.08
+
         edge_pts = {k: [] for k in rough_edges}
         for pt in perimeter:
             best, best_d = None, float("inf")
@@ -195,7 +203,8 @@ class ItemDetector:
                 if d < best_d:
                     best_d = d
                     best = name
-            edge_pts[best].append(pt)
+            if best_d <= threshold:
+                edge_pts[best].append(pt)
 
         # Need at least 2 points per edge to fit a line
         edge_lines = {}
@@ -263,13 +272,10 @@ class ItemDetector:
         landmarks. Standard FEN: red at row 9, black at row 0. Vector from
         black-centroid to red-centroid is the row axis.
         """
-        # Combine pieces + all perimeter landmarks (corners + palace-bottom
-        # + board-border). Convex hull → simplify to 4-vertex polygon. The
-        # 4 polygon vertices are edge-intersection points (board corners),
-        # even though no single input point is necessarily AT a corner —
-        # user's constraint that board-border/palace-bottom lie on edges
-        # (not corners) is respected since approxPolyDP picks corner
-        # positions, not raw input points.
+        # Combine pieces + all perimeter landmarks. Pieces with their centers
+        # on or near a board edge (e.g. chariots at corners in starting
+        # position) help anchor edges; interior pieces get filtered out by
+        # the distance threshold inside _fit_corners_from_perimeter.
         candidates = [p.center for p in pieces]
         if detected_corners:
             candidates.extend([l.center for l in detected_corners])
@@ -280,22 +286,16 @@ class ItemDetector:
         if not candidates:
             return []
 
+        # Primary: edge-line-fit. For each of 4 rough edges (from convex hull),
+        # fit a line through nearby points, then intersect adjacent lines to
+        # get precise corners. Respects user constraint that board-border /
+        # palace-bottom anchor edges but don't become corners.
         tl = tr = bl = br = None
-        pts = np.array(candidates, dtype=np.float32).reshape(-1, 1, 2)
-        hull = cv2.convexHull(pts)
-        peri_len = cv2.arcLength(hull, True)
-        for eps_frac in (0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.18):
-            approx = cv2.approxPolyDP(hull, eps_frac * peri_len, True)
-            if len(approx) == 4:
-                quad = [(float(p[0][0]), float(p[0][1])) for p in approx]
-                tl = min(quad, key=lambda p: p[0] + p[1])
-                br = max(quad, key=lambda p: p[0] + p[1])
-                tr = max(quad, key=lambda p: p[0] - p[1])
-                bl = min(quad, key=lambda p: p[0] - p[1])
-                break
-            if len(approx) < 4:
-                break
+        corners = ItemDetector._fit_corners_from_perimeter(candidates)
+        if corners is not None:
+            tl, tr, bl, br = corners
 
+        # Fallback: 4-extreme by (x±y) over all candidates.
         if tl is None:
             tl = min(candidates, key=lambda p: p[0] + p[1])
             br = max(candidates, key=lambda p: p[0] + p[1])
