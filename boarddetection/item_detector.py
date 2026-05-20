@@ -461,6 +461,19 @@ class ItemDetector:
 
         tl = tr = bl = br = None
 
+        # Primary 0: if 4 board-conner detected in 4 distinct quadrants,
+        # use them directly. They ARE the corners by semantic definition;
+        # no line-fitting needed.
+        if detected_corners and len(detected_corners) >= 4:
+            bc_pts = [l.center for l in detected_corners]
+            cand_tl = min(bc_pts, key=lambda p: p[0] + p[1])
+            cand_br = max(bc_pts, key=lambda p: p[0] + p[1])
+            cand_tr = max(bc_pts, key=lambda p: p[0] - p[1])
+            cand_bl = min(bc_pts, key=lambda p: p[0] - p[1])
+            # 4 must be distinct
+            if len({cand_tl, cand_tr, cand_bl, cand_br}) == 4:
+                tl, tr, bl, br = cand_tl, cand_tr, cand_bl, cand_br
+
         def quadrilateral_sane(c_tl, c_tr, c_bl, c_br):
             """Reject quadrilaterals where any corner is wildly outside the
             candidate point cloud — happens when RANSAC line-fit picks
@@ -480,7 +493,7 @@ class ItemDetector:
         # Primary (when board-border data available): RANSAC find 4 edge
         # lines, intersect adjacent lines → 4 corners, snap to detected
         # board-conner. Robust to rotation since no rough-quad assumption.
-        if board_borders and len(board_borders) >= 6:
+        if tl is None and board_borders and len(board_borders) >= 6:
             border_pts = [l.center for l in board_borders]
             if palace_bottoms:
                 border_pts.extend([l.center for l in palace_bottoms])
