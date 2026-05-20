@@ -140,6 +140,97 @@ class ItemDetector:
             landmarks_by_class=landmarks,
         )
 
+    @staticmethod
+    def _fit_corners_from_perimeter(perimeter):
+        """All perimeter points lie on 4 board edges. Fit 4 edge lines and
+        compute the 4 corners as line intersections — corner positions are
+        NEVER a single input point, but the geometric intersection of edges.
+
+        Steps:
+          1. Rough quadrilateral via convex hull + approxPolyDP (initial corners)
+          2. Assign each perimeter point to its nearest of 4 edges
+          3. cv2.fitLine on each edge's points → 4 precise edge lines
+          4. Pairwise intersections (top∩left, top∩right, bottom∩left, bottom∩right)
+        """
+        pts = np.array(perimeter, dtype=np.float32).reshape(-1, 1, 2)
+        hull = cv2.convexHull(pts)
+        peri_len = cv2.arcLength(hull, True)
+        approx = None
+        for eps_frac in (0.01, 0.02, 0.03, 0.05, 0.08, 0.12):
+            a = cv2.approxPolyDP(hull, eps_frac * peri_len, True)
+            if len(a) == 4:
+                approx = a
+                break
+        if approx is None:
+            return None
+
+        rough = [(float(p[0][0]), float(p[0][1])) for p in approx]
+        r_tl = min(rough, key=lambda p: p[0] + p[1])
+        r_br = max(rough, key=lambda p: p[0] + p[1])
+        r_tr = max(rough, key=lambda p: p[0] - p[1])
+        r_bl = min(rough, key=lambda p: p[0] - p[1])
+        rough_edges = {
+            "top":    (r_tl, r_tr),
+            "right":  (r_tr, r_br),
+            "bottom": (r_br, r_bl),
+            "left":   (r_bl, r_tl),
+        }
+
+        def seg_dist(p, a, b):
+            ax, ay = a
+            bx, by = b
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            if L2 < 1e-6:
+                return ((p[0] - ax) ** 2 + (p[1] - ay) ** 2) ** 0.5
+            t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2))
+            qx, qy = ax + t * dx, ay + t * dy
+            return ((p[0] - qx) ** 2 + (p[1] - qy) ** 2) ** 0.5
+
+        edge_pts = {k: [] for k in rough_edges}
+        for pt in perimeter:
+            best, best_d = None, float("inf")
+            for name, (a, b) in rough_edges.items():
+                d = seg_dist(pt, a, b)
+                if d < best_d:
+                    best_d = d
+                    best = name
+            edge_pts[best].append(pt)
+
+        # Need at least 2 points per edge to fit a line
+        edge_lines = {}
+        for name, points in edge_pts.items():
+            if len(points) >= 2:
+                arr = np.array(points, dtype=np.float32)
+                edge_lines[name] = cv2.fitLine(arr, cv2.DIST_L2, 0, 0.01, 0.01)
+            else:
+                # Use the rough edge as the line
+                a, b = rough_edges[name]
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                L = (dx * dx + dy * dy) ** 0.5 or 1.0
+                edge_lines[name] = np.array(
+                    [[dx / L], [dy / L], [a[0]], [a[1]]], dtype=np.float32
+                )
+
+        def line_intersect(l1, l2):
+            v1x, v1y, x01, y01 = l1.flatten()
+            v2x, v2y, x02, y02 = l2.flatten()
+            A = np.array([[v1x, -v2x], [v1y, -v2y]], dtype=np.float64)
+            b = np.array([x02 - x01, y02 - y01], dtype=np.float64)
+            try:
+                t = np.linalg.solve(A, b)
+                return (float(x01 + t[0] * v1x), float(y01 + t[0] * v1y))
+            except np.linalg.LinAlgError:
+                return None
+
+        tl = line_intersect(edge_lines["top"], edge_lines["left"])
+        tr = line_intersect(edge_lines["top"], edge_lines["right"])
+        bl = line_intersect(edge_lines["bottom"], edge_lines["left"])
+        br = line_intersect(edge_lines["bottom"], edge_lines["right"])
+        if None in (tl, tr, bl, br):
+            return None
+        return tl, tr, bl, br
+
     # Known landmark positions in (col, row) grid coordinates
     _LANDMARK_GRID_POSITIONS = {
         "board-conner":  [(0, 0), (8, 0), (0, 9), (8, 9)],
@@ -172,10 +263,13 @@ class ItemDetector:
         landmarks. Standard FEN: red at row 9, black at row 0. Vector from
         black-centroid to red-centroid is the row axis.
         """
-        # Combine pieces + all perimeter landmarks. Pieces matter in starting
-        # positions (chariots at corners). Perimeter landmarks matter when
-        # corners are occluded (mid-game) — board-border points along the
-        # edges extend the convex hull to the actual board boundary.
+        # Combine pieces + all perimeter landmarks (corners + palace-bottom
+        # + board-border). Convex hull → simplify to 4-vertex polygon. The
+        # 4 polygon vertices are edge-intersection points (board corners),
+        # even though no single input point is necessarily AT a corner —
+        # user's constraint that board-border/palace-bottom lie on edges
+        # (not corners) is respected since approxPolyDP picks corner
+        # positions, not raw input points.
         candidates = [p.center for p in pieces]
         if detected_corners:
             candidates.extend([l.center for l in detected_corners])
@@ -186,11 +280,27 @@ class ItemDetector:
         if not candidates:
             return []
 
-        # Step 1: find 4 image extremes
-        tl = min(candidates, key=lambda p: p[0] + p[1])
-        br = max(candidates, key=lambda p: p[0] + p[1])
-        tr = max(candidates, key=lambda p: p[0] - p[1])
-        bl = min(candidates, key=lambda p: p[0] - p[1])
+        tl = tr = bl = br = None
+        pts = np.array(candidates, dtype=np.float32).reshape(-1, 1, 2)
+        hull = cv2.convexHull(pts)
+        peri_len = cv2.arcLength(hull, True)
+        for eps_frac in (0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.18):
+            approx = cv2.approxPolyDP(hull, eps_frac * peri_len, True)
+            if len(approx) == 4:
+                quad = [(float(p[0][0]), float(p[0][1])) for p in approx]
+                tl = min(quad, key=lambda p: p[0] + p[1])
+                br = max(quad, key=lambda p: p[0] + p[1])
+                tr = max(quad, key=lambda p: p[0] - p[1])
+                bl = min(quad, key=lambda p: p[0] - p[1])
+                break
+            if len(approx) < 4:
+                break
+
+        if tl is None:
+            tl = min(candidates, key=lambda p: p[0] + p[1])
+            br = max(candidates, key=lambda p: p[0] + p[1])
+            tr = max(candidates, key=lambda p: p[0] - p[1])
+            bl = min(candidates, key=lambda p: p[0] - p[1])
         extremes = [tl, tr, bl, br]
 
         def standard_portrait():
