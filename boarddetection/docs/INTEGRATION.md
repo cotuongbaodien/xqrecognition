@@ -220,14 +220,28 @@ rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR
 | Resolution | ≥ 640x640 |
 | Bàn cờ visibility | Toàn bộ bàn cờ trong khung |
 | Bàn cờ chiếm | ≥ 50% diện tích |
-| Góc chụp | Thẳng đứng hoặc nghiêng nhẹ < 15° |
-| **Orientation** | **Portrait** (board cao hơn rộng) — landscape sẽ bị FEN sai |
+| Góc chụp | Thẳng/nghiêng nhẹ tốt nhất, < 20° tilt vẫn xử lý được |
+| Orientation | Portrait hoặc landscape đều OK (auto-detect rotation 0°/90°/180°) |
 
-### Limitations hiện tại
+### Limitations hiện tại (v6)
 
-1. **Mirror trái-phải**: bàn cờ đối xứng → đôi lúc FEN bị mirror. App consuming có thể tự xử lý nếu cần.
-2. **Board rotation 90°**: ảnh chụp board nằm ngang → FEN bị rotate. Bắt buộc chụp portrait.
+1. **Heavy rotation (>30°)**: ảnh chụp board nghiêng quá thì grid algorithm có thể fail. Khuyến nghị chụp tương đối thẳng.
+2. **Mirror trái-phải**: bàn cờ đối xứng → đôi lúc FEN bị mirror. App consuming có thể tự xử lý.
 3. **Cold start**: model load ~0.3s (cached) hoặc vài giây (lần đầu, download ultralytics deps). Dùng pattern singleton để chỉ load 1 lần.
+4. **Piece misclassification**: ở góc palace có thể nhầm `b`↔`c` hoặc `r`↔`p`. Improve bằng cách add training data.
+
+### Grid algorithm
+
+Xem `docs/GRID_ALGORITHM.md` cho chi tiết — 7-stage pipeline:
+1. Find 4 corner candidates (pieces + landmarks)
+2. RANSAC tìm 4 edge lines
+3. Convex hull fallback nếu thiếu line
+4. 4-extreme fallback nếu vẫn không đủ
+5. Bipartite snap to detected board-conner
+6. Piece-color-based orientation detection (handles 90°/180° rotation)
+7. cv2.getPerspectiveTransform → 9×10 grid
+
+Test results (11 ảnh): 10/11 grid OK, 5/11 EXACT FEN.
 
 ### Performance
 
