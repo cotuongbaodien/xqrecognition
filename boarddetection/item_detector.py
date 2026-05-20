@@ -192,6 +192,44 @@ class ItemDetector:
         return lines
 
     @staticmethod
+    def _verify_grid_with_borders(grid, perimeter_landmarks, threshold=12.0):
+        """Count perimeter landmarks (board-conner + palace-bottom +
+        board-border) within threshold of any of the 4 grid edges. All 34
+        perimeter positions lie on grid edges by definition, so a correct
+        grid covers all detections; a wrong grid leaves many off-edge.
+
+        Returns coverage fraction in [0, 1].
+        """
+        if not perimeter_landmarks or grid is None:
+            return 1.0
+        from .settings import GRID_COLS, GRID_ROWS
+        tl = grid.points[0, 0]
+        tr = grid.points[0, GRID_COLS - 1]
+        bl = grid.points[GRID_ROWS - 1, 0]
+        br = grid.points[GRID_ROWS - 1, GRID_COLS - 1]
+        edges = [(tl, tr), (tr, br), (br, bl), (bl, tl)]
+
+        def seg_dist(p, a, b):
+            ax, ay = a[0], a[1]
+            bx, by = b[0], b[1]
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            if L2 < 1e-6:
+                return ((p[0] - ax) ** 2 + (p[1] - ay) ** 2) ** 0.5
+            t = max(0.0, min(1.0,
+                             ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2))
+            qx, qy = ax + t * dx, ay + t * dy
+            return ((p[0] - qx) ** 2 + (p[1] - qy) ** 2) ** 0.5
+
+        on_edge = 0
+        for lm in perimeter_landmarks:
+            x, y = lm.center
+            min_d = min(seg_dist((x, y), a, b) for a, b in edges)
+            if min_d < threshold:
+                on_edge += 1
+        return on_edge / len(perimeter_landmarks)
+
+    @staticmethod
     def _line_intersect(l1, l2):
         v1x, v1y, x01, y01 = l1.flatten()
         v2x, v2y, x02, y02 = l2.flatten()
@@ -275,6 +313,110 @@ class ItemDetector:
             tr = snap(tr)
             bl = snap(bl)
             br = snap(br)
+
+        return tl, tr, bl, br
+
+    @staticmethod
+    def _fit_quadrilateral_em(perimeter, max_iters=10, tol=1.0):
+        """Iterative EM fit: find 4 lines through perimeter points so the
+        4 line intersections form a quadrilateral passing through all points.
+
+        Each iteration:
+          E-step: assign each point to its nearest of 4 edges
+          M-step: refit a line through each edge's assigned points
+          Compute 4 new corners as line intersections
+          Stop when corners shift < tol pixels or after max_iters
+
+        Returns (tl, tr, bl, br) or None.
+        """
+        if len(perimeter) < 4:
+            return None
+
+        # Initial estimate: convex hull → 4-vertex polygon
+        pts = np.array(perimeter, dtype=np.float32).reshape(-1, 1, 2)
+        hull = cv2.convexHull(pts)
+        peri_len = cv2.arcLength(hull, True)
+        approx = None
+        for eps_frac in (0.01, 0.02, 0.03, 0.05, 0.08, 0.12):
+            a = cv2.approxPolyDP(hull, eps_frac * peri_len, True)
+            if len(a) == 4:
+                approx = a
+                break
+        if approx is None:
+            return None
+
+        rough = [(float(p[0][0]), float(p[0][1])) for p in approx]
+        tl = min(rough, key=lambda p: p[0] + p[1])
+        br = max(rough, key=lambda p: p[0] + p[1])
+        tr = max(rough, key=lambda p: p[0] - p[1])
+        bl = min(rough, key=lambda p: p[0] - p[1])
+
+        def seg_dist(p, a, b):
+            ax, ay = a
+            bx, by = b
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            if L2 < 1e-6:
+                return ((p[0] - ax) ** 2 + (p[1] - ay) ** 2) ** 0.5
+            t = max(0.0, min(1.0,
+                             ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2))
+            qx, qy = ax + t * dx, ay + t * dy
+            return ((p[0] - qx) ** 2 + (p[1] - qy) ** 2) ** 0.5
+
+        prev_corners = None
+        for iteration in range(max_iters):
+            edges = [(tl, tr), (tr, br), (br, bl), (bl, tl)]
+            edge_pts = [[] for _ in range(4)]
+
+            # E-step: each point to its nearest edge
+            for pt in perimeter:
+                best_i, best_d = 0, float("inf")
+                for i, (a, b) in enumerate(edges):
+                    d = seg_dist(pt, a, b)
+                    if d < best_d:
+                        best_d = d
+                        best_i = i
+                edge_pts[best_i].append(pt)
+
+            # M-step: refit a line per edge
+            lines = []
+            for i, points in enumerate(edge_pts):
+                if len(points) >= 2:
+                    arr = np.array(points, dtype=np.float32)
+                    lines.append(cv2.fitLine(arr, cv2.DIST_L2, 0, 0.01, 0.01))
+                else:
+                    a, b = edges[i]
+                    dx, dy = b[0] - a[0], b[1] - a[1]
+                    L = (dx * dx + dy * dy) ** 0.5 or 1.0
+                    lines.append(np.array(
+                        [[dx / L], [dy / L], [a[0]], [a[1]]], dtype=np.float32
+                    ))
+
+            # Compute new corners: lines[0]=top, [1]=right, [2]=bottom, [3]=left
+            new_tl = ItemDetector._line_intersect(lines[0], lines[3])
+            new_tr = ItemDetector._line_intersect(lines[0], lines[1])
+            new_bl = ItemDetector._line_intersect(lines[2], lines[3])
+            new_br = ItemDetector._line_intersect(lines[2], lines[1])
+            if None in (new_tl, new_tr, new_bl, new_br):
+                return None
+
+            # Convergence check
+            if prev_corners is not None:
+                max_shift = max(
+                    ((new_tl[0] - prev_corners[0][0]) ** 2
+                     + (new_tl[1] - prev_corners[0][1]) ** 2) ** 0.5,
+                    ((new_tr[0] - prev_corners[1][0]) ** 2
+                     + (new_tr[1] - prev_corners[1][1]) ** 2) ** 0.5,
+                    ((new_bl[0] - prev_corners[2][0]) ** 2
+                     + (new_bl[1] - prev_corners[2][1]) ** 2) ** 0.5,
+                    ((new_br[0] - prev_corners[3][0]) ** 2
+                     + (new_br[1] - prev_corners[3][1]) ** 2) ** 0.5,
+                )
+                if max_shift < tol:
+                    break
+
+            prev_corners = (new_tl, new_tr, new_bl, new_br)
+            tl, tr, bl, br = new_tl, new_tr, new_bl, new_br
 
         return tl, tr, bl, br
 
@@ -847,10 +989,6 @@ class ItemDetector:
         from .settings import GRID_COLS, GRID_ROWS
 
         # ---- Strategy 1: 4 board-corners → exact perspective transform ----
-        # User insight: 4 board-corners define grid geometry. They enclose all
-        # pieces and form the 4 grid corners. Use cv2.getPerspectiveTransform
-        # so the grid passes through EXACTLY these 4 points (no averaging
-        # with palace landmarks that would pull corners off-board).
         corner_corrs = ItemDetector._find_4_board_corners(
             ItemDetector._dedupe_landmarks(result.board_corners),
             result.pieces,
@@ -861,6 +999,42 @@ class ItemDetector:
         if len(corner_corrs) == 4:
             grid = ItemDetector._grid_from_4_corners(corner_corrs, image_shape)
             if grid is not None:
+                # Validate: all perimeter landmarks (board-conner +
+                # palace-bottom + board-border) should lie on the 4 grid
+                # edges. Only fire fallback for VERY low coverage (<50%),
+                # because EM-fallback overfits model false-positive
+                # landmark detections (coverage goes up but grid is wrong).
+                all_perim = []
+                all_perim.extend(ItemDetector._dedupe_landmarks(result.board_borders))
+                all_perim.extend(ItemDetector._dedupe_landmarks(result.board_corners))
+                all_perim.extend(ItemDetector._dedupe_landmarks(result.palace_bottoms))
+                coverage = ItemDetector._verify_grid_with_borders(grid, all_perim)
+                if coverage >= 0.5:
+                    return grid
+
+                # Fallback: iterative EM on perimeter-only candidates.
+                # Finds a quadrilateral that passes through all detected
+                # perimeter landmarks (user's algorithm: rectangle through
+                # all corner + border + bottom points).
+                if all_perim:
+                    perim_only = [l.center for l in all_perim]
+                    alt_corners = ItemDetector._fit_quadrilateral_em(perim_only)
+                    if alt_corners is not None:
+                        alt_corner_corrs = [
+                            (0, 0, alt_corners[0][0], alt_corners[0][1]),
+                            (8, 0, alt_corners[1][0], alt_corners[1][1]),
+                            (0, 9, alt_corners[2][0], alt_corners[2][1]),
+                            (8, 9, alt_corners[3][0], alt_corners[3][1]),
+                        ]
+                        alt_grid = ItemDetector._grid_from_4_corners(
+                            alt_corner_corrs, image_shape
+                        )
+                        if alt_grid is not None:
+                            alt_coverage = ItemDetector._verify_grid_with_borders(
+                                alt_grid, all_perim
+                            )
+                            if alt_coverage > coverage:
+                                return alt_grid
                 return grid
 
         # ---- Strategy 2: 4 board corners → bilinear (fallback) ----
