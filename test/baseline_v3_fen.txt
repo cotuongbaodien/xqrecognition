@@ -1,0 +1,33 @@
+[1/11] Processing: 1.png
+  FEN: 1rbakabnr/9/1cn3c2/pR2p1p1p/2p6/9/P1P1P1P1P/2N1C2C1/9/2BAKABNR w
+  Pieces: 32, Confidence: 0.95
+[2/11] Processing: 10.jpg
+  FEN: 2baka1r1/9/n1c1b1n2/p1p1p3p/6p2/1NP6/P3P1P1P/4B1N2/CR6R/3AKAB2 w
+  Pieces: 31, Confidence: 0.81
+[3/11] Processing: 11.jpg
+  FEN: R7b/9/9/B7p/3C3n1/7p1/3CP4/7Nb/5PNn1/3P3c1 w
+  Pieces: 31, Confidence: 0.81
+[4/11] Processing: 12.jpg
+  FEN: 4kab2/4a4/9/3n1b3/3R1pN2/1p2p3n/1c4P2/5P3/4CB3/c4A3 w
+  Pieces: 26, Confidence: 0.90
+[5/11] Processing: 2.png
+  FEN: 2rak1bnr/4a4/1c2b1c2/1R6p/5N3/2p6/P3P1P1P/4C2C1/9/2BAKA1NR w
+  Pieces: 26, Confidence: 0.93
+[6/11] Processing: 3.png
+  FEN: r1bakabnr/9/1cn4c1/p1p1p1p1p/9/9/P1P1P1P1P/2N1C2C1/9/R1BAKABNR w
+  Pieces: 32, Confidence: 0.93
+[7/11] Processing: 4.png
+  FEN: 2bak3r/4a4/2n1bcc2/p1p1p1N1p/9/2P6/P3P3P/2N5B/1r2A4/4KABR1 w
+  Pieces: 28, Confidence: 0.85
+[8/11] Processing: 5.png
+  FEN: 3aka3/9/2n1b1cP1/p3p3c/5n3/6p2/P3P3P/2NCB4/4A4/3A2B2 w
+  Pieces: 25, Confidence: 0.84
+[9/11] Processing: 6.png
+  FEN: 2bak4/4a4/4b1c2/p3p1C1p/2pn5/P5P1n/c1P1P3N/2C1B4/3NA4/4KAB2 w
+  Pieces: 26, Confidence: 0.94
+[10/11] Processing: 7.png
+  FEN: 2bak4/4a4/4b1c2/p4C2p/9/P1p1pnP1n/cCP1P3N/4B4/3NA4/4KAB2 w
+  Pieces: 26, Confidence: 0.95
+[11/11] Processing: 8.png
+  FEN: 2bakabr1/9/1c4nc1/3rp1p1p/p1p6/5NP2/n1P1P3P/N2CC4/R8/2BAKABR1 w
+  Pieces: 31, Confidence: 0.94
