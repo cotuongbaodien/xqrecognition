@@ -461,13 +461,27 @@ class ItemDetector:
 
         tl = tr = bl = br = None
 
+        def quadrilateral_sane(c_tl, c_tr, c_bl, c_br):
+            """Reject quadrilaterals where any corner is wildly outside the
+            candidate point cloud — happens when RANSAC line-fit picks
+            near-parallel lines whose intersection diverges."""
+            xs = [p[0] for p in candidates]
+            ys = [p[1] for p in candidates]
+            mx, Mx = min(xs), max(xs)
+            my, My = min(ys), max(ys)
+            margin = max(Mx - mx, My - my) * 0.3
+            lo_x, hi_x = mx - margin, Mx + margin
+            lo_y, hi_y = my - margin, My + margin
+            for p in (c_tl, c_tr, c_bl, c_br):
+                if not (lo_x <= p[0] <= hi_x and lo_y <= p[1] <= hi_y):
+                    return False
+            return True
+
         # Primary (when board-border data available): RANSAC find 4 edge
         # lines, intersect adjacent lines → 4 corners, snap to detected
         # board-conner. Robust to rotation since no rough-quad assumption.
         if board_borders and len(board_borders) >= 6:
             border_pts = [l.center for l in board_borders]
-            # Also feed palace-bottoms (back-rank edges) and board-conners
-            # (real corners) as additional anchor points for the edge lines
             if palace_bottoms:
                 border_pts.extend([l.center for l in palace_bottoms])
             if detected_corners:
@@ -475,13 +489,13 @@ class ItemDetector:
             corners = ItemDetector._fit_corners_from_edge_lines(
                 border_pts, detected_corners=detected_corners
             )
-            if corners is not None:
+            if corners is not None and quadrilateral_sane(*corners):
                 tl, tr, bl, br = corners
 
         # Fallback 1: rough-quad + per-edge line-fit
         if tl is None:
             corners = ItemDetector._fit_corners_from_perimeter(candidates)
-            if corners is not None:
+            if corners is not None and quadrilateral_sane(*corners):
                 tl, tr, bl, br = corners
 
         # Fallback 2: 4-extreme by (x±y)
