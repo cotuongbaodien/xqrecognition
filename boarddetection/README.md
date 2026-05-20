@@ -46,6 +46,7 @@ boarddetection/
 ├── settings.py            ← Class names, FEN mapping, paths, thresholds
 ├── models/
 │   └── items.pt           ← Trained YOLOv8 model (22MB, gitignored)
+│                            v6: 19 classes (14 pieces + 5 landmark types)
 └── docs/
     └── INTEGRATION.md     ← Hướng dẫn integrate chi tiết cho backend team
 ```
