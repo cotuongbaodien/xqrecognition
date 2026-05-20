@@ -192,6 +192,45 @@ class ItemDetector:
         return lines
 
     @staticmethod
+    def _verify_grid_with_borders(grid, perimeter_landmarks, threshold=None):
+        """Coverage = fraction of detected perimeter landmarks (board-conner
+        + palace-bottom + board-border) within `threshold` pixels of any of
+        the 4 grid edges. If threshold is None, uses 30% of cell size
+        (~½ cell — generous tolerance for sloppy detections).
+        Returns coverage in [0, 1].
+        """
+        if not perimeter_landmarks or grid is None:
+            return 1.0
+        from .settings import GRID_COLS, GRID_ROWS
+        if threshold is None:
+            threshold = 0.3 * max(grid.cell_width, grid.cell_height)
+        tl = grid.points[0, 0]
+        tr = grid.points[0, GRID_COLS - 1]
+        bl = grid.points[GRID_ROWS - 1, 0]
+        br = grid.points[GRID_ROWS - 1, GRID_COLS - 1]
+        edges = [(tl, tr), (tr, br), (br, bl), (bl, tl)]
+
+        def seg_dist(p, a, b):
+            ax, ay = a[0], a[1]
+            bx, by = b[0], b[1]
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            if L2 < 1e-6:
+                return ((p[0] - ax) ** 2 + (p[1] - ay) ** 2) ** 0.5
+            t = max(0.0, min(1.0,
+                             ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2))
+            qx, qy = ax + t * dx, ay + t * dy
+            return ((p[0] - qx) ** 2 + (p[1] - qy) ** 2) ** 0.5
+
+        on_edge = 0
+        for lm in perimeter_landmarks:
+            x, y = lm.center
+            min_d = min(seg_dist((x, y), a, b) for a, b in edges)
+            if min_d < threshold:
+                on_edge += 1
+        return on_edge / len(perimeter_landmarks)
+
+    @staticmethod
     def _line_intersect(l1, l2):
         v1x, v1y, x01, y01 = l1.flatten()
         v2x, v2y, x02, y02 = l2.flatten()
