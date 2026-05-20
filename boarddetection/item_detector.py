@@ -451,6 +451,34 @@ class ItemDetector:
             br = max(candidates, key=lambda p: p[0] + p[1])
             tr = max(candidates, key=lambda p: p[0] - p[1])
             bl = min(candidates, key=lambda p: p[0] - p[1])
+
+        # Universal post-snap with quadrant matching: each detected
+        # board-conner maps to the computed corner it's closest to, but no
+        # two board-conners can map to the same computed corner (greedy
+        # bipartite matching). board-conner detections are AT corners so
+        # they refine line-fit output without collapsing distinct corners.
+        if detected_corners:
+            bc_pts = [l.center for l in detected_corners]
+            slots = {"TL": tl, "TR": tr, "BL": bl, "BR": br}
+            taken = set()
+            SNAP_THRESHOLD = 40.0
+            for bc in bc_pts:
+                ranked = sorted(
+                    slots.items(),
+                    key=lambda kv: (bc[0] - kv[1][0]) ** 2
+                                   + (bc[1] - kv[1][1]) ** 2,
+                )
+                for slot_name, slot_pt in ranked:
+                    if slot_name in taken:
+                        continue
+                    d = ((bc[0] - slot_pt[0]) ** 2
+                         + (bc[1] - slot_pt[1]) ** 2) ** 0.5
+                    if d < SNAP_THRESHOLD:
+                        slots[slot_name] = bc
+                        taken.add(slot_name)
+                    break
+            tl, tr, bl, br = slots["TL"], slots["TR"], slots["BL"], slots["BR"]
+
         extremes = [tl, tr, bl, br]
 
         def standard_portrait():
