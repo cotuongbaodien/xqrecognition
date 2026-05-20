@@ -141,6 +141,144 @@ class ItemDetector:
         )
 
     @staticmethod
+    def _ransac_line(points, threshold=8.0, iterations=200):
+        """Single-iteration RANSAC: best line through points. Returns
+        (line_vec (vx,vy,x0,y0), inliers, outliers) or (None, [], points)."""
+        import random
+        if len(points) < 2:
+            return None, [], list(points)
+        best_inliers_idx = []
+        best_pair = None
+        for _ in range(iterations):
+            i, j = random.sample(range(len(points)), 2)
+            p1, p2 = points[i], points[j]
+            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+            L = (dx * dx + dy * dy) ** 0.5
+            if L < 1e-6:
+                continue
+            nx, ny = -dy / L, dx / L
+            inliers_idx = []
+            for k, p in enumerate(points):
+                d = abs(nx * (p[0] - p1[0]) + ny * (p[1] - p1[1]))
+                if d < threshold:
+                    inliers_idx.append(k)
+            if len(inliers_idx) > len(best_inliers_idx):
+                best_inliers_idx = inliers_idx
+                best_pair = (p1, p2)
+        if best_pair is None or len(best_inliers_idx) < 2:
+            return None, [], list(points)
+        inliers = [points[i] for i in best_inliers_idx]
+        outliers = [p for k, p in enumerate(points) if k not in set(best_inliers_idx)]
+        # Refit precise line via least squares on inliers
+        arr = np.array(inliers, dtype=np.float32)
+        line = cv2.fitLine(arr, cv2.DIST_L2, 0, 0.01, 0.01)
+        return line, inliers, outliers
+
+    @staticmethod
+    def _find_4_edge_lines(border_points, threshold=8.0):
+        """Iterative RANSAC: find up to 4 dominant lines through border
+        points. Each line represents one board edge. Returns list of
+        (line, inliers) sorted by inlier count descending."""
+        remaining = list(border_points)
+        lines = []
+        for _ in range(4):
+            if len(remaining) < 3:
+                break
+            line, inliers, outliers = ItemDetector._ransac_line(remaining, threshold)
+            if line is None or len(inliers) < 2:
+                break
+            lines.append((line, inliers))
+            remaining = outliers
+        return lines
+
+    @staticmethod
+    def _line_intersect(l1, l2):
+        v1x, v1y, x01, y01 = l1.flatten()
+        v2x, v2y, x02, y02 = l2.flatten()
+        A = np.array([[v1x, -v2x], [v1y, -v2y]], dtype=np.float64)
+        b = np.array([x02 - x01, y02 - y01], dtype=np.float64)
+        try:
+            t = np.linalg.solve(A, b)
+            return (float(x01 + t[0] * v1x), float(y01 + t[0] * v1y))
+        except np.linalg.LinAlgError:
+            return None
+
+    @staticmethod
+    def _fit_corners_from_edge_lines(border_points, detected_corners=None,
+                                       threshold=10.0):
+        """User-suggested approach: find 4 dominant lines through border
+        points, intersect adjacent lines → 4 corners. Snap to detected
+        board-conner if close (validates and refines).
+
+        Returns (tl, tr, bl, br) or None.
+        """
+        import math
+        if len(border_points) < 6:
+            return None
+
+        # Stage 1: Find 4 lines via iterative RANSAC
+        lines_with_inliers = ItemDetector._find_4_edge_lines(border_points, threshold)
+        if len(lines_with_inliers) < 4:
+            return None
+        lines = [l for l, _ in lines_with_inliers]
+
+        # Stage 2: group 4 lines into 2 parallel pairs by angle
+        angles = []
+        for line in lines:
+            vx, vy = float(line[0][0]), float(line[1][0])
+            a = math.atan2(vy, vx) % math.pi  # [0, π)
+            angles.append((a, line))
+        angles.sort(key=lambda x: x[0])
+
+        # Try both pairings, pick the one with smaller intra-pair angle diff
+        d12_34 = (abs(angles[0][0] - angles[1][0])
+                  + abs(angles[2][0] - angles[3][0]))
+        d13_24 = (abs(angles[0][0] - angles[2][0])
+                  + abs(angles[1][0] - angles[3][0]))
+        if d12_34 <= d13_24:
+            pair_A = (angles[0][1], angles[1][1])
+            pair_B = (angles[2][1], angles[3][1])
+        else:
+            pair_A = (angles[0][1], angles[2][1])
+            pair_B = (angles[1][1], angles[3][1])
+
+        # Stage 3: intersect pair_A × pair_B → 4 quad corners
+        quad = []
+        for la in pair_A:
+            for lb in pair_B:
+                pt = ItemDetector._line_intersect(la, lb)
+                if pt is None:
+                    return None
+                quad.append(pt)
+
+        # Stage 4: classify quad corners as TL/TR/BL/BR by (x±y)
+        tl = min(quad, key=lambda p: p[0] + p[1])
+        br = max(quad, key=lambda p: p[0] + p[1])
+        tr = max(quad, key=lambda p: p[0] - p[1])
+        bl = min(quad, key=lambda p: p[0] - p[1])
+
+        # Stage 5: snap to detected board-conner if a corner is within
+        # snap_threshold pixels of one — validates and refines using model
+        # detections that are AT corners by definition.
+        if detected_corners:
+            bc_pts = [l.center for l in detected_corners]
+            snap_threshold = threshold * 4  # generous, e.g. 40px
+            def snap(corner):
+                if not bc_pts:
+                    return corner
+                nearest = min(bc_pts,
+                              key=lambda p: (p[0] - corner[0]) ** 2 + (p[1] - corner[1]) ** 2)
+                d = ((nearest[0] - corner[0]) ** 2
+                     + (nearest[1] - corner[1]) ** 2) ** 0.5
+                return nearest if d < snap_threshold else corner
+            tl = snap(tl)
+            tr = snap(tr)
+            bl = snap(bl)
+            br = snap(br)
+
+        return tl, tr, bl, br
+
+    @staticmethod
     def _fit_corners_from_perimeter(perimeter):
         """All perimeter points lie on 4 board edges. Fit 4 edge lines and
         compute the 4 corners as line intersections — corner positions are
@@ -272,10 +410,6 @@ class ItemDetector:
         landmarks. Standard FEN: red at row 9, black at row 0. Vector from
         black-centroid to red-centroid is the row axis.
         """
-        # Combine pieces + all perimeter landmarks. Pieces with their centers
-        # on or near a board edge (e.g. chariots at corners in starting
-        # position) help anchor edges; interior pieces get filtered out by
-        # the distance threshold inside _fit_corners_from_perimeter.
         candidates = [p.center for p in pieces]
         if detected_corners:
             candidates.extend([l.center for l in detected_corners])
@@ -286,16 +420,32 @@ class ItemDetector:
         if not candidates:
             return []
 
-        # Primary: edge-line-fit. For each of 4 rough edges (from convex hull),
-        # fit a line through nearby points, then intersect adjacent lines to
-        # get precise corners. Respects user constraint that board-border /
-        # palace-bottom anchor edges but don't become corners.
         tl = tr = bl = br = None
-        corners = ItemDetector._fit_corners_from_perimeter(candidates)
-        if corners is not None:
-            tl, tr, bl, br = corners
 
-        # Fallback: 4-extreme by (x±y) over all candidates.
+        # Primary (when board-border data available): RANSAC find 4 edge
+        # lines, intersect adjacent lines → 4 corners, snap to detected
+        # board-conner. Robust to rotation since no rough-quad assumption.
+        if board_borders and len(board_borders) >= 6:
+            border_pts = [l.center for l in board_borders]
+            # Also feed palace-bottoms (back-rank edges) and board-conners
+            # (real corners) as additional anchor points for the edge lines
+            if palace_bottoms:
+                border_pts.extend([l.center for l in palace_bottoms])
+            if detected_corners:
+                border_pts.extend([l.center for l in detected_corners])
+            corners = ItemDetector._fit_corners_from_edge_lines(
+                border_pts, detected_corners=detected_corners
+            )
+            if corners is not None:
+                tl, tr, bl, br = corners
+
+        # Fallback 1: rough-quad + per-edge line-fit
+        if tl is None:
+            corners = ItemDetector._fit_corners_from_perimeter(candidates)
+            if corners is not None:
+                tl, tr, bl, br = corners
+
+        # Fallback 2: 4-extreme by (x±y)
         if tl is None:
             tl = min(candidates, key=lambda p: p[0] + p[1])
             br = max(candidates, key=lambda p: p[0] + p[1])
