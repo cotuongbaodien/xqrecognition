@@ -318,6 +318,107 @@ class ItemDetector:
         return tl, tr, bl, br
 
     @staticmethod
+    def _fit_corners_from_minarearect(perimeter):
+        """Robust fallback for tilted boards: rotated bounding rectangle of
+        perimeter landmarks (board-conner, board-border, palace-bottom).
+        Handles arbitrary board rotation since minAreaRect is rotation-aware.
+        Returns (tl, tr, bl, br) ordered in image space, or None.
+        """
+        if len(perimeter) < 4:
+            return None
+        pts = np.array(perimeter, dtype=np.float32)
+        rect = cv2.minAreaRect(pts)
+        box = cv2.boxPoints(rect)
+        corners = [(float(p[0]), float(p[1])) for p in box]
+        tl = min(corners, key=lambda p: p[0] + p[1])
+        br = max(corners, key=lambda p: p[0] + p[1])
+        tr = max(corners, key=lambda p: p[0] - p[1])
+        bl = min(corners, key=lambda p: p[0] - p[1])
+        if len({tl, tr, bl, br}) != 4:
+            return None
+        return tl, tr, bl, br
+
+    @staticmethod
+    def _refine_corners_with_borders(rough_corners, border_points):
+        """Given a rough quadrilateral (tl, tr, bl, br) and detected border
+        landmarks, assign each border to its nearest of 4 edges, fit a line
+        to each edge's points, and intersect adjacent lines for refined
+        corners. Edges with <2 borders keep the rough edge.
+
+        Critical when the rough quad comes from 3 corners + parallelogram
+        completion or minAreaRect — both can be slightly off the actual
+        board edges, so borders pull the edges to their true positions.
+        """
+        if not border_points:
+            return rough_corners
+        r_tl, r_tr, r_bl, r_br = rough_corners
+        rough_edges = {
+            "top":    (r_tl, r_tr),
+            "right":  (r_tr, r_br),
+            "bottom": (r_br, r_bl),
+            "left":   (r_bl, r_tl),
+        }
+
+        def seg_dist(p, a, b):
+            ax, ay = a
+            bx, by = b
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            if L2 < 1e-6:
+                return ((p[0] - ax) ** 2 + (p[1] - ay) ** 2) ** 0.5
+            t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2))
+            qx, qy = ax + t * dx, ay + t * dy
+            return ((p[0] - qx) ** 2 + (p[1] - qy) ** 2) ** 0.5
+
+        xs = [p[0] for p in border_points] + [c[0] for c in rough_corners]
+        ys = [p[1] for p in border_points] + [c[1] for c in rough_corners]
+        diag = ((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) ** 0.5
+        threshold = diag * 0.10  # accept borders within 10% of diag from rough edge
+
+        edge_pts = {k: [] for k in rough_edges}
+        for pt in border_points:
+            best, best_d = None, float("inf")
+            for name, (a, b) in rough_edges.items():
+                d = seg_dist(pt, a, b)
+                if d < best_d:
+                    best_d = d
+                    best = name
+            if best_d <= threshold:
+                edge_pts[best].append(pt)
+
+        edge_lines = {}
+        for name, points in edge_pts.items():
+            if len(points) >= 2:
+                arr = np.array(points, dtype=np.float32)
+                edge_lines[name] = cv2.fitLine(arr, cv2.DIST_L2, 0, 0.01, 0.01)
+            else:
+                a, b = rough_edges[name]
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                L = (dx * dx + dy * dy) ** 0.5 or 1.0
+                edge_lines[name] = np.array(
+                    [[dx / L], [dy / L], [a[0]], [a[1]]], dtype=np.float32
+                )
+
+        def line_intersect(l1, l2):
+            v1x, v1y, x01, y01 = l1.flatten()
+            v2x, v2y, x02, y02 = l2.flatten()
+            A = np.array([[v1x, -v2x], [v1y, -v2y]], dtype=np.float64)
+            b = np.array([x02 - x01, y02 - y01], dtype=np.float64)
+            try:
+                t = np.linalg.solve(A, b)
+                return (float(x01 + t[0] * v1x), float(y01 + t[0] * v1y))
+            except np.linalg.LinAlgError:
+                return None
+
+        tl = line_intersect(edge_lines["top"], edge_lines["left"])
+        tr = line_intersect(edge_lines["top"], edge_lines["right"])
+        bl = line_intersect(edge_lines["bottom"], edge_lines["left"])
+        br = line_intersect(edge_lines["bottom"], edge_lines["right"])
+        if None in (tl, tr, bl, br):
+            return rough_corners
+        return tl, tr, bl, br
+
+    @staticmethod
     def _fit_corners_from_perimeter(perimeter):
         """All perimeter points lie on 4 board edges. Fit 4 edge lines and
         compute the 4 corners as line intersections — corner positions are
@@ -460,19 +561,67 @@ class ItemDetector:
             return []
 
         tl = tr = bl = br = None
+        n_corners = len(detected_corners) if detected_corners else 0
+        refine_pts = []
+        if board_borders:
+            refine_pts.extend([l.center for l in board_borders])
+        if palace_bottoms:
+            refine_pts.extend([l.center for l in palace_bottoms])
 
-        # Primary 0: if 4 board-conner detected in 4 distinct quadrants,
-        # use them directly. They ARE the corners by semantic definition;
-        # no line-fitting needed.
-        if detected_corners and len(detected_corners) >= 4:
+        # =========================================================
+        # STRATEGY BY DETECTED-CORNER COUNT
+        # =========================================================
+        # The 4 board corners are the strongest grid anchors. Strategy
+        # branches by how many are detected, falling back to perimeter
+        # geometry when corners are sparse.
+
+        # --- 4 corners: use directly (no line-fitting needed) ---
+        if n_corners >= 4:
             bc_pts = [l.center for l in detected_corners]
             cand_tl = min(bc_pts, key=lambda p: p[0] + p[1])
             cand_br = max(bc_pts, key=lambda p: p[0] + p[1])
             cand_tr = max(bc_pts, key=lambda p: p[0] - p[1])
             cand_bl = min(bc_pts, key=lambda p: p[0] - p[1])
-            # 4 must be distinct
             if len({cand_tl, cand_tr, cand_bl, cand_br}) == 4:
                 tl, tr, bl, br = cand_tl, cand_tr, cand_bl, cand_br
+
+        # --- 3 corners: parallelogram completion + edge refinement ---
+        # D = A + C - B where A,C are diagonal endpoints (max pairwise
+        # distance) and B is the shared corner. Refinement pulls each
+        # edge to the line through nearest borders.
+        elif n_corners == 3:
+            bc_pts = [l.center for l in detected_corners]
+            c1, c2, c3 = bc_pts
+            d12 = (c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2
+            d23 = (c2[0] - c3[0]) ** 2 + (c2[1] - c3[1]) ** 2
+            d13 = (c1[0] - c3[0]) ** 2 + (c1[1] - c3[1]) ** 2
+            if d12 >= d23 and d12 >= d13:
+                c4 = (c1[0] + c2[0] - c3[0], c1[1] + c2[1] - c3[1])
+            elif d23 >= d13:
+                c4 = (c2[0] + c3[0] - c1[0], c2[1] + c3[1] - c1[1])
+            else:
+                c4 = (c1[0] + c3[0] - c2[0], c1[1] + c3[1] - c2[1])
+            all_4 = [c1, c2, c3, c4]
+            cand_tl = min(all_4, key=lambda p: p[0] + p[1])
+            cand_br = max(all_4, key=lambda p: p[0] + p[1])
+            cand_tr = max(all_4, key=lambda p: p[0] - p[1])
+            cand_bl = min(all_4, key=lambda p: p[0] - p[1])
+            if len({cand_tl, cand_tr, cand_bl, cand_br}) == 4:
+                rough = (cand_tl, cand_tr, cand_bl, cand_br)
+                refined = ItemDetector._refine_corners_with_borders(
+                    rough, refine_pts
+                )
+                tl, tr, bl, br = refined
+
+        # --- 2 corners: minAreaRect anchored on perimeter+corners ---
+        # The 2 detected corners are guaranteed to be 2 board corners.
+        # Including them in minAreaRect input ensures the rect's hull
+        # touches them. SNAP step (later) pulls the 2 nearest rect
+        # corners exactly onto the detected ones.
+        # --- 1 corner: same approach. The 1 corner anchors snap step.
+        # --- 0 corners: pure perimeter geometry.
+        # All three cases use the same minAreaRect + edge-refine path,
+        # differentiated only by SNAP at the end.
 
         def quadrilateral_sane(c_tl, c_tr, c_bl, c_br):
             """Reject quadrilaterals where any corner is wildly outside the
@@ -490,9 +639,42 @@ class ItemDetector:
                     return False
             return True
 
-        # Primary (when board-border data available): RANSAC find 4 edge
-        # lines, intersect adjacent lines → 4 corners, snap to detected
-        # board-conner. Robust to rotation since no rough-quad assumption.
+        def quad_non_degenerate(c_tl, c_tr, c_bl, c_br):
+            """Reject quads where corners are collinear or width/height
+            degenerate. A real board has 4 corners forming a proper quad with
+            min-side-length > 20% of bbox diag."""
+            sides = [
+                ((c_tl[0] - c_tr[0]) ** 2 + (c_tl[1] - c_tr[1]) ** 2) ** 0.5,
+                ((c_tr[0] - c_br[0]) ** 2 + (c_tr[1] - c_br[1]) ** 2) ** 0.5,
+                ((c_br[0] - c_bl[0]) ** 2 + (c_br[1] - c_bl[1]) ** 2) ** 0.5,
+                ((c_bl[0] - c_tl[0]) ** 2 + (c_bl[1] - c_tl[1]) ** 2) ** 0.5,
+            ]
+            xs = [c[0] for c in (c_tl, c_tr, c_bl, c_br)]
+            ys = [c[1] for c in (c_tl, c_tr, c_bl, c_br)]
+            diag = ((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) ** 0.5
+            return min(sides) >= diag * 0.2
+
+        # Common path for 0/1/2 corners: minAreaRect of perimeter+pieces,
+        # refined by per-edge line fit. Robust to arbitrary rotation and
+        # mild perspective. minAreaRect is deterministic. Pieces anchor
+        # against false-positive perimeter detections. The SNAP step
+        # later pulls computed corners to detected corners (if any).
+        if tl is None and len(candidates) >= 4:
+            corners = ItemDetector._fit_corners_from_minarearect(candidates)
+            if (corners is not None
+                    and quadrilateral_sane(*corners)
+                    and quad_non_degenerate(*corners)):
+                refine_with = list(refine_pts)
+                if detected_corners:
+                    refine_with.extend([l.center for l in detected_corners])
+                corners = ItemDetector._refine_corners_with_borders(
+                    corners, refine_with
+                )
+                tl, tr, bl, br = corners
+
+        # Fallback 1: RANSAC edge-line fit (axis-aligned tight boards where
+        # borders form clear lines). Less robust to rotation but more precise
+        # when 4 edges have many borders evenly distributed.
         if tl is None and board_borders and len(board_borders) >= 6:
             border_pts = [l.center for l in board_borders]
             if palace_bottoms:
@@ -502,16 +684,20 @@ class ItemDetector:
             corners = ItemDetector._fit_corners_from_edge_lines(
                 border_pts, detected_corners=detected_corners
             )
-            if corners is not None and quadrilateral_sane(*corners):
+            if (corners is not None
+                    and quadrilateral_sane(*corners)
+                    and quad_non_degenerate(*corners)):
                 tl, tr, bl, br = corners
 
-        # Fallback 1: rough-quad + per-edge line-fit
+        # Fallback 2: rough-quad + per-edge line-fit (axis-aligned boards)
         if tl is None:
             corners = ItemDetector._fit_corners_from_perimeter(candidates)
-            if corners is not None and quadrilateral_sane(*corners):
+            if (corners is not None
+                    and quadrilateral_sane(*corners)
+                    and quad_non_degenerate(*corners)):
                 tl, tr, bl, br = corners
 
-        # Fallback 2: 4-extreme by (x±y)
+        # Fallback 3: 4-extreme by (x±y)
         if tl is None:
             tl = min(candidates, key=lambda p: p[0] + p[1])
             br = max(candidates, key=lambda p: p[0] + p[1])
