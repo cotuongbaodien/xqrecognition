@@ -19,6 +19,9 @@ Backup v4: `boarddetection/models/items_items_v4.pt` (mAP50 = 0.937, palace-bott
 | 9 | 10.jpg | `2baka1r1/9/n1c1b1n2/p1p1p3p/6p2/1NP6/P3P1P1P/4B1N2/CR6R/3AKAB2 w` | `2baka1r1/1r7/n1c1b1n1c/p1p1p3p/6p2/1NP6/P3P1P1P/C3B1N2/CR6R/3AKAB2 w` | ⚠️ Thiếu 3 pieces (r@1,1 + c@2,8 + C@7,0) |
 | 10 | 11.jpg | `R7b/9/9/B7p/3C3n1/7p1/3CP4/7Nb/5PNn1/3P3c1 w` | `3rka1r1/4a4/1c2b1n1c/p3pNR1p/1nb3p2/6P2/P3P3P/2C1C4/9/RNBAKAB2 w` | ❌ HOÀN TOÀN SAI (rotation failure, conf 0.68 thấp) |
 | 11 | 12.jpg | `4kab2/4a4/9/3n1b3/3R1pN2/1p2p3n/1c4P2/5P3/4CB3/c4A3 w` | `4kab2/4a4/2n1bc3/2R1p1N2/p2r4n/c4NP2/4P4/3CB2C1/4A4/2BAK4 w` | ❌ Row 0,1 đúng; row 2-9 lệch cells (grid scale off?) |
+| 12 | 13.jpg | (v7) | `2bak3r/4a4/3cb1nc1/2pnN1p1p/p5Pr1/2P1R4/P3P3P/2N1BC2C/4A4/2BAK3R w` | Ground truth from user |
+| 13 | 14.jpg | (v7) | `3akab2/1r1P5/4b2Cn/p3p1p2/8p/4r4/P7P/4C3N/4A4/3AK1BR1 w` | Ground truth from user |
+| 14 | 15.jpg | (v7) | `2baka3/9/4c3b/p7p/2p1P1p2/9/P1P3n1P/4B1N2/1r2Ac1C1/RN2KAB2 w` | Ground truth (top-down view, untrained style) |
 
 ## Summary
 
