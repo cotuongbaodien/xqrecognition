@@ -148,12 +148,18 @@ class XiangqiRecognizer:
         if len(pieces) > 32:
             pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)[:32]
 
-        # Build grid. Prefer board-segmentation (robust to tilt/perspective);
-        # fall back to landmark-point fitting if seg unavailable or fails.
+        # Build grid. Prefer board-segmentation (robust to tilt/perspective),
+        # refining its 4 corners with detected board-conner landmarks (which
+        # sit AT grid corners by definition, so they give pixel-precise
+        # positions on clean boards). Fall back to landmark-point fitting if
+        # seg unavailable or fails.
         grid = None
         if self.board_segmenter is not None:
             quad = self.board_segmenter.get_board_quad(image)
             if quad is not None:
+                quad = self._snap_quad_to_corners(
+                    quad, item_result.board_corners
+                )
                 grid = ItemDetector.build_grid_from_quad(
                     quad, pieces,
                     palace_centers=item_result.palace_centers,
@@ -232,6 +238,34 @@ class XiangqiRecognizer:
             visualization=visualization,
             errors=errors,
         )
+
+    @staticmethod
+    def _snap_quad_to_corners(quad, board_corners, threshold=50.0):
+        """Refine segmentation quad corners using detected board-conner
+        landmarks. Each board-conner sits AT a grid corner by definition, so
+        when one lies near a seg corner, it gives a pixel-precise position.
+        Greedy 1-to-1 match prevents two detections collapsing to one corner.
+        Seg corners with no nearby detection keep their value (robust on
+        tilted boards where corners aren't detected)."""
+        if not board_corners:
+            return quad
+        slots = list(quad)  # [tl, tr, bl, br]
+        bc_pts = [l.center for l in board_corners]
+        taken = set()
+        for bc in bc_pts:
+            order = sorted(
+                range(4),
+                key=lambda i: (bc[0] - slots[i][0]) ** 2 + (bc[1] - slots[i][1]) ** 2,
+            )
+            for i in order:
+                if i in taken:
+                    continue
+                d = ((bc[0] - slots[i][0]) ** 2 + (bc[1] - slots[i][1]) ** 2) ** 0.5
+                if d < threshold:
+                    slots[i] = (float(bc[0]), float(bc[1]))
+                    taken.add(i)
+                break
+        return tuple(slots)
 
     def _create_visualization(
         self,

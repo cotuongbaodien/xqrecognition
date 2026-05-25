@@ -2715,7 +2715,7 @@
     "image": "test\\12.jpg"
   },
   {
-    "fen": "2bak3r/4a4/3cb1c2/2pnN1p1p/p5Pr1/2P1R4/P3N3P/4B3C/9/2CAK3R w",
+    "fen": "2bak3r/4a4/3cb1nc1/2pnN1p1p/p5Pr1/2P1R4/P3N3P/4B3C/9/2CAK3R w",
     "pieces": [
       {
         "class_id": 1,
@@ -3269,6 +3269,11 @@
         [
           2,
           6,
+          "n"
+        ],
+        [
+          2,
+          7,
           "c"
         ],
         [
@@ -3373,8 +3378,8 @@
         "k": 1,
         "r": 2,
         "c": 2,
+        "n": 2,
         "p": 4,
-        "n": 1,
         "N": 2,
         "P": 4,
         "R": 2,
@@ -6596,7 +6601,7 @@
     "image": "test\\4.png"
   },
   {
-    "fen": "2Raka3/3r5/2n1b1cR1/p3p3c/5n3/6p2/P3P3P/2NCB4/4A4/2A1K1B2 w",
+    "fen": "2Raka3/3r5/2n1b1cR1/p3p3c/5n3/6p2/P3P3P/2NCB4/4A4/3AK1B2 w",
     "pieces": [
       {
         "class_id": 16,
@@ -7117,7 +7122,7 @@
         ],
         [
           9,
-          2,
+          3,
           "A"
         ],
         [
