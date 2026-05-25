@@ -866,11 +866,21 @@ class ItemDetector:
             proj = centered @ major
             if (proj.max() - proj.min()) > 0.3 * board_diag:
                 row_axis = major / np.linalg.norm(major)
-        # 3. bbox aspect fallback
+        # 3. Quad edge-length fallback (rotation-aware). Board = 9 cols × 10
+        #    rows, so the LONGER edge pair is the row axis (10 rows span more
+        #    than 9 cols). Uses the actual quad geometry — unlike axis-aligned
+        #    bbox, which misleads on tilted boards (a ~30°-rotated portrait
+        #    board can have a bbox slightly wider than tall, wrongly picking a
+        #    horizontal row axis).
         if row_axis is None:
-            row_axis = np.array([0.0, 1.0])
-            if (max(xs) - min(xs)) > (max(ys) - min(ys)):
-                row_axis = np.array([1.0, 0.0])
+            top_len = ((tl[0] - tr[0]) ** 2 + (tl[1] - tr[1]) ** 2) ** 0.5
+            left_len = ((tl[0] - bl[0]) ** 2 + (tl[1] - bl[1]) ** 2) ** 0.5
+            if left_len >= top_len:
+                v = np.array([bl[0] - tl[0], bl[1] - tl[1]], dtype=float)
+            else:
+                v = np.array([tr[0] - tl[0], tr[1] - tl[1]], dtype=float)
+            n = np.linalg.norm(v)
+            row_axis = v / n if n > 0 else np.array([0.0, 1.0])
 
         # SIGN: red side = row 9. Use piece-color centroids projected on row axis.
         red = [p for p in pieces if p.fen_symbol and p.fen_symbol.isupper()]
