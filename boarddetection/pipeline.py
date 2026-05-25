@@ -12,9 +12,11 @@ import numpy as np
 
 from .settings import (
     ITEMS_MODEL,
+    MODELS_DIR,
     PIECE_CONFIDENCE_THRESHOLD,
 )
 from .board_detector import BoardDetector, Grid
+from .board_segmenter import BoardSegmenter
 from .piece_detector import PieceDetector, DetectedPiece
 from .item_detector import ItemDetector
 from .fen_generator import FENGenerator, BoardState
@@ -77,6 +79,14 @@ class XiangqiRecognizer:
         self.item_detector.load_model(items_path)
         print(f"Loaded items model from {items_path}")
 
+        # Optional board-segmentation model for robust board localization
+        # (preferred over landmark-point fitting when available).
+        self.board_segmenter = None
+        seg_path = MODELS_DIR / "board_seg.pt"
+        if seg_path.exists():
+            self.board_segmenter = BoardSegmenter(str(seg_path))
+            print(f"Loaded board-seg model from {seg_path}")
+
     def recognize(
         self,
         image_path: str,
@@ -138,12 +148,27 @@ class XiangqiRecognizer:
         if len(pieces) > 32:
             pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)[:32]
 
-        # Build grid from landmarks (bilinear / homography / bbox fallback)
-        grid = ItemDetector.build_grid_from_landmarks(
-            item_result, image_shape=(h, w)
-        )
+        # Build grid. Prefer board-segmentation (robust to tilt/perspective);
+        # fall back to landmark-point fitting if seg unavailable or fails.
+        grid = None
+        if self.board_segmenter is not None:
+            quad = self.board_segmenter.get_board_quad(image)
+            if quad is not None:
+                grid = ItemDetector.build_grid_from_quad(
+                    quad, pieces,
+                    palace_centers=item_result.palace_centers,
+                    palace_corners=item_result.palace_corners,
+                    palace_bottoms=item_result.palace_bottoms,
+                    image_shape=(h, w),
+                )
+                if grid is None:
+                    errors.append("Board-seg quad found but grid build failed")
         if grid is None:
-            errors.append("Failed to build grid from landmarks")
+            grid = ItemDetector.build_grid_from_landmarks(
+                item_result, image_shape=(h, w)
+            )
+        if grid is None:
+            errors.append("Failed to build grid")
 
         # Step 3: Map pieces to grid
         if grid is not None:

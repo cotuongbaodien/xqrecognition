@@ -809,6 +809,113 @@ class ItemDetector:
         return correspondences
 
     @staticmethod
+    def _corners_to_correspondences(
+        tl, tr, bl, br,
+        pieces: List[DetectedPiece],
+        palace_centers: Optional[List["Landmark"]] = None,
+        palace_corners: Optional[List["Landmark"]] = None,
+        palace_bottoms: Optional[List["Landmark"]] = None,
+    ) -> List[Tuple[float, float, float, float]]:
+        """Assign 4 image-space corners (already TL/TR/BL/BR by x±y) to grid
+        (col,row).
+
+        ROW AXIS (which way rows run) is determined from palace landmarks,
+        which are the most reliable orientation cue: both palaces lie on the
+        center columns (3-5) at the two row-ends, so palace points spread
+        primarily along the row axis. Priority:
+          1. 2 palace-centers (cols 4, rows 1 & 8) → line between them
+          2. PCA major axis of ALL palace points (center+conner+bottom) when
+             they span >3 cells (i.e. points from BOTH palaces present)
+          3. 4-corner bbox aspect ratio (board's long side = row axis)
+
+        SIGN (which end is row 9 = red) from piece colors.
+        """
+        extremes = [tl, tr, bl, br]
+
+        def standard_portrait():
+            return [
+                (0, 0, tl[0], tl[1]), (8, 0, tr[0], tr[1]),
+                (0, 9, bl[0], bl[1]), (8, 9, br[0], br[1]),
+            ]
+
+        xs = [p[0] for p in extremes]
+        ys = [p[1] for p in extremes]
+        board_diag = ((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) ** 0.5
+
+        palace_pts = []
+        for grp in (palace_centers, palace_corners, palace_bottoms):
+            if grp:
+                palace_pts.extend([l.center for l in grp])
+
+        row_axis = None
+        # 1. Two palace-centers → cleanest row axis
+        if palace_centers and len(palace_centers) >= 2:
+            p1 = np.array(palace_centers[0].center, dtype=float)
+            p2 = np.array(palace_centers[1].center, dtype=float)
+            v = p2 - p1
+            if np.linalg.norm(v) > 0.3 * board_diag:
+                row_axis = v / np.linalg.norm(v)
+        # 2. PCA major axis of all palace points (robust to partial detection)
+        if row_axis is None and len(palace_pts) >= 2:
+            pts = np.array(palace_pts, dtype=float)
+            mean = pts.mean(axis=0)
+            centered = pts - mean
+            _, _, vt = np.linalg.svd(centered, full_matrices=False)
+            major = vt[0]
+            # spread along major axis must indicate two palaces (>30% diag)
+            proj = centered @ major
+            if (proj.max() - proj.min()) > 0.3 * board_diag:
+                row_axis = major / np.linalg.norm(major)
+        # 3. bbox aspect fallback
+        if row_axis is None:
+            row_axis = np.array([0.0, 1.0])
+            if (max(xs) - min(xs)) > (max(ys) - min(ys)):
+                row_axis = np.array([1.0, 0.0])
+
+        # SIGN: red side = row 9. Use piece-color centroids projected on row axis.
+        red = [p for p in pieces if p.fen_symbol and p.fen_symbol.isupper()]
+        black = [p for p in pieces if p.fen_symbol and p.fen_symbol.islower()]
+        if len(red) >= 2 and len(black) >= 2:
+            red_c = np.array([sum(p.center[0] for p in red) / len(red),
+                              sum(p.center[1] for p in red) / len(red)])
+            black_c = np.array([sum(p.center[0] for p in black) / len(black),
+                                sum(p.center[1] for p in black) / len(black)])
+            sep = np.dot(red_c - black_c, row_axis)
+            if abs(sep) >= 30 and sep < 0:
+                row_axis = -row_axis
+
+        col_axis = np.array([row_axis[1], -row_axis[0]])
+        cx = sum(p[0] for p in extremes) / 4
+        cy = sum(p[1] for p in extremes) / 4
+        corrs = []
+        for x, y in extremes:
+            v = np.array([x - cx, y - cy])
+            row = 9 if float(np.dot(v, row_axis)) > 0 else 0
+            col = 8 if float(np.dot(v, col_axis)) > 0 else 0
+            corrs.append((col, row, x, y))
+        if len({(c[0], c[1]) for c in corrs}) != 4:
+            return standard_portrait()
+        return corrs
+
+    @staticmethod
+    def build_grid_from_quad(
+        quad: Tuple[Tuple[float, float], ...],
+        pieces: List[DetectedPiece],
+        palace_centers: Optional[List["Landmark"]] = None,
+        palace_corners: Optional[List["Landmark"]] = None,
+        palace_bottoms: Optional[List["Landmark"]] = None,
+        image_shape: Optional[Tuple[int, int]] = None,
+    ) -> Optional[Grid]:
+        """Build a 9x10 grid from 4 board corners (from segmentation mask).
+        quad is (tl, tr, bl, br) ordered by x±y extremes."""
+        tl, tr, bl, br = quad
+        corrs = ItemDetector._corners_to_correspondences(
+            tl, tr, bl, br, pieces, palace_centers,
+            palace_corners, palace_bottoms,
+        )
+        return ItemDetector._grid_from_4_corners(corrs, image_shape)
+
+    @staticmethod
     def _grid_from_4_corners(
         corner_corrs: List[Tuple[float, float, float, float]],
         image_shape: Optional[Tuple[int, int]] = None,
