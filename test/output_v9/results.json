@@ -8041,7 +8041,7 @@
     "image": "test\\23.jpg"
   },
   {
-    "fen": "9/9/9/9/1K5k1/9/9/9/9/9 w",
+    "fen": "9/9/9/9/9/9/9/9/9/9 w",
     "pieces": [
       {
         "class_id": 15,
@@ -8080,22 +8080,8 @@
     ],
     "piece_count": 2,
     "board_state": {
-      "pieces": [
-        [
-          4,
-          1,
-          "K"
-        ],
-        [
-          4,
-          7,
-          "k"
-        ]
-      ],
-      "counts": {
-        "K": 1,
-        "k": 1
-      }
+      "pieces": [],
+      "counts": {}
     },
     "image_shape": [
       640,
@@ -14325,7 +14311,7 @@
     "image": "test\\40.jpg"
   },
   {
-    "fen": "9/9/9/9/A8/9/9/9/9/9 w",
+    "fen": "9/9/9/9/9/1A7/9/9/9/9 w",
     "pieces": [
       {
         "class_id": 11,
@@ -14349,8 +14335,8 @@
     "board_state": {
       "pieces": [
         [
-          4,
-          0,
+          5,
+          1,
           "A"
         ]
       ],
@@ -21544,7 +21530,7 @@
     "image": "test\\56.jpg"
   },
   {
-    "fen": "9/9/9/9/9/9/3K5/9/9/9 w",
+    "fen": "9/9/9/9/9/9/9/2K6/9/9 w",
     "pieces": [
       {
         "class_id": 15,
@@ -21568,8 +21554,8 @@
     "board_state": {
       "pieces": [
         [
-          6,
-          3,
+          7,
+          2,
           "K"
         ]
       ],
@@ -26340,7 +26326,7 @@
     "image": "test\\7.png"
   },
   {
-    "fen": "rn1abaknr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/RN1A5/4BAKNR w",
+    "fen": "rn1abaknr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RN1ABAKNR w",
     "pieces": [
       {
         "class_id": 3,
@@ -27001,17 +26987,17 @@
           "C"
         ],
         [
-          8,
+          9,
           0,
           "R"
         ],
         [
-          8,
+          9,
           1,
           "N"
         ],
         [
-          8,
+          9,
           3,
           "A"
         ],

@@ -917,13 +917,87 @@ class ItemDetector:
         image_shape: Optional[Tuple[int, int]] = None,
     ) -> Optional[Grid]:
         """Build a 9x10 grid from 4 board corners (from segmentation mask).
-        quad is (tl, tr, bl, br) ordered by x±y extremes."""
+        quad is (tl, tr, bl, br) ordered by x±y extremes.
+
+        If palace-centers are detected, they refine the grid: they sit at the
+        FIXED positions (col 4, row 1) and (col 4, row 8) — strong interior
+        anchors. After the initial 4-corner grid, each detected palace-center
+        is assigned to its nearest of those two positions and added as an
+        extra correspondence; the homography is re-fit (least-squares) so the
+        grid also passes through them, correcting interior row/col alignment
+        that 4 imperfect seg corners alone can miss.
+        """
         tl, tr, bl, br = quad
         corrs = ItemDetector._corners_to_correspondences(
             tl, tr, bl, br, pieces, palace_centers,
             palace_corners, palace_bottoms,
         )
-        return ItemDetector._grid_from_4_corners(corrs, image_shape)
+        grid = ItemDetector._grid_from_4_corners(corrs, image_shape)
+        if grid is None or not palace_centers:
+            return grid
+
+        # Assign each detected palace-center to nearest of (4,1)/(4,8) using
+        # the initial grid, then re-fit with corners + palace-centers.
+        pc_targets = [(4, 1), (4, 8)]
+        extra = []
+        used = set()
+        for lm in palace_centers:
+            best = None
+            best_d = float("inf")
+            for (col, row) in pc_targets:
+                if (col, row) in used:
+                    continue
+                exp = grid.get_point(row, col)
+                if exp is None:
+                    continue
+                d = (lm.center[0] - exp.x) ** 2 + (lm.center[1] - exp.y) ** 2
+                if d < best_d:
+                    best_d = d
+                    best = (col, row)
+            if best is not None:
+                used.add(best)
+                extra.append((best[0], best[1], lm.center[0], lm.center[1]))
+        if not extra:
+            return grid
+
+        refined = ItemDetector._grid_from_correspondences(
+            corrs + extra, image_shape
+        )
+        return refined if refined is not None else grid
+
+    @staticmethod
+    def _grid_from_correspondences(
+        corrs: List[Tuple[float, float, float, float]],
+        image_shape: Optional[Tuple[int, int]] = None,
+    ) -> Optional[Grid]:
+        """Least-squares homography from >=4 (col,row)->(x,y) correspondences,
+        then project the full 9x10 lattice. Used to fold in interior anchors
+        (palace-centers) on top of the 4 board corners."""
+        from .settings import GRID_COLS, GRID_ROWS
+        if len(corrs) < 4:
+            return None
+        src = np.array([[c[0], c[1]] for c in corrs], dtype=np.float32)
+        dst = np.array([[c[2], c[3]] for c in corrs], dtype=np.float32)
+        try:
+            H, _ = cv2.findHomography(src, dst, 0)
+        except cv2.error:
+            return None
+        if H is None:
+            return None
+        grid_points = np.zeros((GRID_ROWS, GRID_COLS, 2))
+        for row in range(GRID_ROWS):
+            for col in range(GRID_COLS):
+                t = H @ np.array([col, row, 1.0])
+                if t[2] != 0:
+                    t /= t[2]
+                grid_points[row, col] = [t[0], t[1]]
+        dx = grid_points[:, 1:, :] - grid_points[:, :-1, :]
+        dy = grid_points[1:, :, :] - grid_points[:-1, :, :]
+        cw = float(np.mean(np.linalg.norm(dx, axis=2)))
+        ch = float(np.mean(np.linalg.norm(dy, axis=2)))
+        if cw < 5 or ch < 5:
+            return None
+        return Grid(points=grid_points, cell_width=cw, cell_height=ch)
 
     @staticmethod
     def _grid_from_4_corners(
