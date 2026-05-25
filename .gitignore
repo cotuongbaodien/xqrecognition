@@ -55,3 +55,12 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Datasets (large, not versioned) + build artifacts
+/data/items_v*/
+/data/board_seg_v*/
+/data/board_seg_trained/
+/data/*.zip
+/data/fendata/
+/deploy/
+/xqrecognition_v*.zip
