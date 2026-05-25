@@ -1,309 +1,140 @@
 # Xiangqi Recognition System
 
-Hệ thống nhận diện bàn cờ tướng (Xiangqi/Chinese Chess) từ ảnh sử dụng Computer Vision và Deep Learning, xuất ra FEN notation.
+Nhận diện bàn cờ tướng (Xiangqi) từ ảnh → xuất **FEN notation**.
 
-A computer vision system for recognizing Xiangqi (Chinese Chess) board positions from images and generating FEN (Forsyth-Edwards Notation) strings.
-
-## Features
-
-- **Board Detection**: Nhận diện grid 9x10 của bàn cờ sử dụng YOLOv8-Segmentation
-- **Piece Detection**: Nhận diện và phân loại 14 loại quân cờ sử dụng YOLOv8
-- **FEN Generation**: Chuyển đổi trạng thái bàn cờ thành FEN notation chuẩn
-- **REST API**: FastAPI web service để tích hợp dễ dàng
-- **CLI Tools**: Command-line interfaces cho training và detection
-
-## Documentation / Tài Liệu
-
-| Document | Mô tả |
-|----------|-------|
-| [USAGE.md](docs/USAGE.md) | Hướng dẫn sử dụng chi tiết (Tiếng Việt) |
-| [ACCURACY_ANALYSIS.md](docs/ACCURACY_ANALYSIS.md) | Phân tích độ chính xác & giải pháp cải thiện |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Kiến trúc hệ thống chi tiết |
-
-## Quick Start
-
-### 1. Installation
-
-```bash
-# Clone repository
-git clone <repository-url>
-cd xqrecognition
-
-# Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# hoặc: venv\Scripts\activate  # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 2. Setup Datasets
-
-```bash
-# Extract datasets from zip files
-python train.py setup
-```
-
-### 3. Train Models
-
-```bash
-# Train pieces detection model
-python train.py pieces --epochs 100
-
-# Train board segmentation model (optional)
-python train.py board --epochs 100
-```
-
-### 4. Run Detection
-
-```bash
-# Detect from image
-python detect.py --image board.jpg --output output/
-
-# Start API server
-python app.py
-```
-
-## System Architecture
+Input: ảnh chụp bàn cờ (bất kỳ góc, nghiêng, livestream, app online, bàn gỗ thật).
+Output: grid 9×10, tọa độ quân, và chuỗi FEN.
 
 ```
-Input Image
-    │
-    ▼
-┌─────────────────────────────┐
-│   Board Detection           │  YOLOv8-Seg → 90 intersection points
-│   (Optional)                │  → Build 9x10 grid
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│   Piece Detection           │  YOLOv8 → Detect 14 piece classes
-│   (Required)                │  → Bounding boxes + classes
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│   Grid Mapping              │  Map pieces to grid positions
-│                             │  → 10x9 board matrix
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│   FEN Generation            │  Convert to FEN string
-└─────────────┬───────────────┘
-              │
-              ▼
-Output: "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR"
+Ảnh → segment bàn cờ → 4 góc → perspective grid 9×10 → detect quân → snap vào grid → FEN
 ```
+
+---
+
+## Hướng giải quyết (Approach)
+
+Nguyên tắc cốt lõi: **AI lo nhận diện, toán học lo grid.** Tách rõ 2 việc:
+
+1. **Localize bàn cờ** = AI (segmentation) — robust với mọi góc nghiêng/perspective.
+2. **Dựng grid** = hình học thuần (homography từ 4 góc) — không cần AI, luôn chính xác.
+
+### Pipeline chi tiết
+
+| Bước | Cách làm | Module |
+|---|---|---|
+| 1. Localize bàn | **Segmentation mask** (YOLO11n-seg) → polygon → 4 góc grid | `board_segmenter.py` |
+| 2. Tinh chỉnh góc | Snap 4 góc seg vào `board-conner` detected (pixel-precise) | `pipeline._snap_quad_to_corners` |
+| 3. Xác định chiều | Row axis từ **palace landmarks** (PCA của palace-center/conner/bottom); chiều đỏ/đen từ màu quân | `item_detector._corners_to_correspondences` |
+| 4. Dựng grid 9×10 | `cv2.getPerspectiveTransform` (4 góc → 90 giao điểm) | `item_detector._grid_from_4_corners` |
+| 5. Detect quân | YOLOv8s (`items.pt`) trên ảnh GỐC (giữ chất lượng) | `item_detector.py` |
+| 6. Snap + FEN | Map quân vào giao điểm gần nhất → ma trận 10×9 → FEN | `fen_generator.py` |
+
+**Fallback:** nếu segmentation fail, tự động chuyển sang dựng grid từ landmark points (board-conner + board-border + palace).
+
+### Tại sao segmentation thay vì detect điểm
+
+Cách cũ detect các điểm rời rạc trên viền (board-conner, board-border) rồi fit polygon — kém robust khi bàn nghiêng (board-conner mAP chỉ ~0.66, hay thiếu điểm). Segmentation nhìn **toàn bộ mặt bàn** nên ra polygon ổn định kể cả khi nghiêng 30° hoặc che góc.
+
+---
+
+## Models
+
+| Model | Kiến trúc | Nhiệm vụ |
+|---|---|---|
+| `boarddetection/models/items.pt` | YOLOv8s, 19 classes | Detect 14 quân + 5 landmark trong 1 pass |
+| `boarddetection/models/board_seg.pt` | YOLO11n-seg, 1 class | Segment polygon bàn cờ |
+
+Backups (model cũ) ở `models/backups/` — `boarddetection/models/` chỉ chứa model production.
+
+### 19 classes của items.pt (kebab-case)
+
+- **14 quân**: `{black,red}-{advisor,cannon,chariot,elephant,general,horse,soldier}`
+- **5 landmark**: `board-border`, `board-conner`, `palace-bottom`, `palace-center`, `palace-conner`
+
+> Với segmentation, `board-border` (26 điểm/bàn) hầu như **không còn cần** cho path chính — chỉ dùng ở fallback. Landmark thiết yếu hiện tại: `board-conner` (snap góc) + `palace-*` (xác định chiều).
+
+---
 
 ## Usage
 
-### CLI Detection
+### Detection
 
 ```bash
-# Single image
-python detect.py --image board.jpg
+# 1 ảnh
+python detect.py --image board.jpg --output output/
 
-# Directory of images
-python detect.py --dir images/ --output results/
-
-# With custom confidence threshold
-python detect.py --image board.jpg --confidence 0.3
-
-# Without board detection (faster, uses interpolation)
-python detect.py --image board.jpg --no-board
-```
-
-### CLI Training
-
-```bash
-# Train pieces model
-python train.py pieces --epochs 100 --batch-size 16
-
-# Train board model
-python train.py board --epochs 100 --batch-size 8
-
-# Train both
-python train.py all --epochs 100
-
-# Resume training
-python train.py pieces --resume
-```
-
-### API Server
-
-```bash
-# Start server
-python app.py --host 0.0.0.0 --port 8000
-```
-
-**API Endpoints:**
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API information |
-| `/health` | GET | Health check |
-| `/detect` | POST | Detect and return JSON |
-| `/detect/visualize` | POST | Return visualization image |
-| `/docs` | GET | Swagger documentation |
-
-**Example API Call:**
-
-```bash
-curl -X POST "http://localhost:8000/detect" \
-  -F "file=@board.jpg"
-```
-
-```json
-{
-  "fen": "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR",
-  "pieces": [...],
-  "piece_count": 32,
-  "confidence": 0.95
-}
+# cả thư mục
+python detect.py --dir test/ --output test/output/ --confidence 0.3
 ```
 
 ### Python API
 
 ```python
-from src.pipeline import XiangqiRecognizer
+from boarddetection import XiangqiRecognizer
 
-# Initialize
-recognizer = XiangqiRecognizer(
-    pieces_model_path="models/pieces_det.pt",
-    use_board_detection=True
-)
-
-# Recognize
-result = recognizer.recognize("board.jpg", visualize=True)
-
-print(f"FEN: {result.fen}")
-print(f"Pieces: {len(result.pieces)}")
-print(f"Confidence: {result.confidence:.2%}")
+recognizer = XiangqiRecognizer()          # tự load items.pt + board_seg.pt
+result = recognizer.recognize("board.jpg")
+print(result.fen)                          # → "1rbakabnr/9/1cn3c2/..."
 ```
+
+### Training
+
+```bash
+# Train detection (pieces + landmarks)
+python scripts/train_items.py --data data/items_vN/data.yaml --name items_vN
+
+# Train board segmentation
+yolo segment train data=data/board_seg/data.yaml model=yolo11n-seg.pt epochs=150 imgsz=640
+
+# Pipeline retrain tự động (extract → split → backup → train → test)
+python scripts/retrain.py --zip data/itemdetection.yolov8.zip --name items_vN
+```
+
+---
+
+## Trạng thái hiện tại (2026-05-25)
+
+Test trên 14 ảnh đa dạng (web, ảnh chụp thật, app, livestream):
+
+- ✅ **Grid đúng 14/14** — kể cả bàn nghiêng (11), perspective (13), top-down (15)
+- **FEN EXACT: 7/14**
+- Lỗi còn lại **100% là piece classification** (nhầm loại/màu quân), KHÔNG phải grid
+  - Ví dụ 10.jpg (chụp qua màn hình): màu đỏ bị ám → nhầm đen↔đỏ
+  - Giải pháp: train pieces với data đa dạng hơn
+
+### Hướng cải thiện tiếp
+
+1. **Re-label + train pieces** với nhiều style (screen-capture, ánh sáng khác) → fix color/type misclass
+2. Seg train thêm ảnh đa dạng → corner precision cao hơn
+3. (optional) Adaptive HSV color clustering per-image nếu cần fix màu không qua training
+
+---
 
 ## Project Structure
 
 ```
 xqrecognition/
-├── config/
-│   └── settings.py          # Configuration constants
-├── src/
-│   ├── board_detector.py    # Board grid detection
-│   ├── piece_detector.py    # Chess piece detection
-│   ├── fen_generator.py     # FEN generation
-│   └── pipeline.py          # Main pipeline
-├── scripts/
-│   ├── setup_data.py        # Dataset extraction
-│   ├── train_board.py       # Board model training
-│   ├── train_pieces.py      # Pieces model training
-│   └── evaluate.py          # Evaluation
-├── docs/
-│   ├── USAGE.md             # Usage guide
-│   ├── ACCURACY_ANALYSIS.md # Accuracy analysis
-│   └── ARCHITECTURE.md      # System architecture
-├── models/                   # Trained models
-├── data/                     # Datasets
-├── app.py                   # FastAPI server
-├── train.py                 # Training CLI
-├── detect.py                # Detection CLI
-├── requirements.txt
-├── Dockerfile
-└── README.md
-```
-
-## Chess Pieces (14 Classes)
-
-| ID | Name | Tiếng Việt | FEN |
-|----|------|------------|-----|
-| 0 | Advisor_black | Sĩ đen | a |
-| 1 | Advisor_red | Sĩ đỏ | A |
-| 2 | Cannon_black | Pháo đen | c |
-| 3 | Cannon_red | Pháo đỏ | C |
-| 4 | Elephant_black | Tượng đen | b |
-| 5 | Elephant_red | Tượng đỏ | B |
-| 6 | General_black | Tướng đen | k |
-| 7 | General_red | Tướng đỏ | K |
-| 8 | Knight_black | Mã đen | n |
-| 9 | Knight_red | Mã đỏ | N |
-| 10 | Pawn_black | Tốt đen | p |
-| 11 | Pawn_red | Tốt đỏ | P |
-| 12 | Rook_black | Xe đen | r |
-| 13 | Rook_red | Xe đỏ | R |
-
-## FEN Notation
-
-**Standard starting position:**
-```
-rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR
-```
-
-- Row 0 (top): Black's back rank
-- Row 9 (bottom): Red's back rank
-- `/` separates rows
-- Numbers = consecutive empty squares
-- Uppercase = Red, lowercase = Black
-
-## Accuracy & Improvement
-
-Xem chi tiết tại [ACCURACY_ANALYSIS.md](docs/ACCURACY_ANALYSIS.md)
-
-### Expected Accuracy
-
-| Stage | Target Accuracy |
-|-------|-----------------|
-| Piece Detection (mAP@50) | 90-95% |
-| FEN Exact Match | 75-85% |
-| Piece Position Accuracy | 95-98% |
-
-### Key Improvement Strategies
-
-1. **Data Augmentation**: Rotation, perspective, lighting variations
-2. **Game Rules Validation**: Filter invalid positions
-3. **Ensemble Models**: Combine multiple YOLO models
-4. **Hybrid Board Detection**: ML + Traditional CV
-
-## Docker
-
-```bash
-# Build
-docker build -t xqrecognition .
-
-# Run
-docker run -p 8000:8000 xqrecognition
-```
-
-## Evaluation
-
-```bash
-# Evaluate pieces model
-python scripts/evaluate.py pieces --split test
-
-# Evaluate full pipeline
-python scripts/evaluate.py pipeline \
-  --test-dir test_images/ \
-  --ground-truth ground_truth.json \
-  --output results.json
+├── boarddetection/              # Package chính (self-contained, deploy được)
+│   ├── pipeline.py              # XiangqiRecognizer — entry point
+│   ├── board_segmenter.py       # Segment bàn → 4 góc
+│   ├── item_detector.py         # Detect quân+landmark, dựng grid
+│   ├── piece_detector.py        # NMS + visualization
+│   ├── fen_generator.py         # Map grid → FEN
+│   ├── rules_validator.py       # Validate luật cờ
+│   ├── settings.py              # 19 classes, config
+│   ├── models/                  # items.pt + board_seg.pt (chỉ production)
+│   └── docs/                    # GRID_ALGORITHM.md, INTEGRATION.md
+├── scripts/                     # train_items, gen_board_polygon, retrain, ...
+├── data/                        # Datasets
+├── test/                        # Ảnh test + output visualizations
+└── detect.py                    # Detection CLI
 ```
 
 ## Requirements
 
-- Python 3.8+
-- PyTorch 2.0+
-- Ultralytics YOLOv8
-- OpenCV
-- FastAPI
-- CUDA (optional, for GPU acceleration)
+- Python 3.8+, PyTorch 2.0+, Ultralytics, OpenCV, NumPy
+- CUDA (optional, cho GPU)
 
 ## License
 
-MIT License
-
-## Contributing
-
-1. Fork the repository
-2. Create feature branch
-3. Commit changes
-4. Push to branch
-5. Create Pull Request
+MIT
