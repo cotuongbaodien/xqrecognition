@@ -12,10 +12,10 @@ args = parser.parse_args()
 ROOT = Path(__file__).parent.parent / args.dir
 
 CLASSES = [
-    # v6+ alphabetical order (matches Roboflow export)
+    # v8 alphabetical order (board-border dropped — seg model localizes board)
     "black-advisor", "black-cannon", "black-chariot", "black-elephant",
     "black-general", "black-horse", "black-soldier",
-    "board-border", "board-conner",
+    "board-conner",
     "palace-bottom", "palace-center", "palace-conner",
     "red-advisor", "red-cannon", "red-chariot", "red-elephant",
     "red-general", "red-horse", "red-soldier",

@@ -41,17 +41,17 @@ Cách cũ detect các điểm rời rạc trên viền (board-conner, board-bord
 
 | Model | Kiến trúc | Nhiệm vụ |
 |---|---|---|
-| `boarddetection/models/items.pt` | YOLOv8s, 19 classes | Detect 14 quân + 5 landmark trong 1 pass |
+| `boarddetection/models/items.pt` | YOLOv8s, 18 classes | Detect 14 quân + 4 landmark trong 1 pass |
 | `boarddetection/models/board_seg.pt` | YOLO11n-seg, 1 class | Segment polygon bàn cờ |
 
 Backups (model cũ) ở `models/backups/` — `boarddetection/models/` chỉ chứa model production.
 
-### 19 classes của items.pt (kebab-case)
+### 18 classes của items.pt (kebab-case, v8)
 
 - **14 quân**: `{black,red}-{advisor,cannon,chariot,elephant,general,horse,soldier}`
-- **5 landmark**: `board-border`, `board-conner`, `palace-bottom`, `palace-center`, `palace-conner`
+- **4 landmark**: `board-conner`, `palace-bottom`, `palace-center`, `palace-conner`
 
-> Với segmentation, `board-border` (26 điểm/bàn) hầu như **không còn cần** cho path chính — chỉ dùng ở fallback. Landmark thiết yếu hiện tại: `board-conner` (snap góc) + `palace-*` (xác định chiều).
+> `board-border` (26 điểm/bàn) đã **bỏ từ v8** — segmentation thay thế vai trò localize bàn. Landmark thiết yếu: `board-conner` (snap góc) + `palace-*` (xác định chiều).
 
 ---
 

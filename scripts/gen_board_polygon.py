@@ -25,8 +25,9 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
-# Perimeter landmark class IDs in the v6+ detection scheme
-PERIMETER_IDS = {7, 8, 9}  # board-border, board-conner, palace-bottom
+# Perimeter landmark class IDs in the v8 detection scheme
+# (board-border dropped → only board-conner + palace-bottom on perimeter)
+PERIMETER_IDS = {7, 8}     # board-conner, palace-bottom
 MIN_POINTS = 4             # need at least this many to form a board hull
 
 

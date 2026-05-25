@@ -20,13 +20,15 @@ BOARD_SEG_CLASSES = {
 
 # Piece detection classes - mapping class ID to (name, FEN symbol)
 # =============================================================
-# Item detection classes (NEW STANDARD - itemdetection.yolov8)
-# 18 classes: 14 pieces + 4 landmarks
+# Item detection classes (NEW STANDARD - itemdetection v8)
+# 18 classes: 14 pieces + 4 landmarks (board-border DROPPED in v8 —
+# board localization is now handled by the segmentation model, so the
+# heavy 26-point board-border class is no longer labeled/trained).
 # Used by models/items.pt
 # =============================================================
 ITEM_CLASSES = {
-    # IDs match Roboflow v6+ alphabetical ordering — board-border at 7 shifts
-    # other landmarks +1 from old (v3-v5) numbering.
+    # Roboflow alphabetical order (v8, board-border removed → landmarks
+    # after it shift -1 vs v6/v7).
     0:  ("black-advisor",  "a"),
     1:  ("black-cannon",   "c"),
     2:  ("black-chariot",  "r"),
@@ -34,18 +36,17 @@ ITEM_CLASSES = {
     4:  ("black-general",  "k"),
     5:  ("black-horse",    "n"),
     6:  ("black-soldier",  "p"),
-    7:  ("board-border",   None),   # NEW v6+: 26 perimeter grid points
-    8:  ("board-conner",   None),
-    9:  ("palace-bottom",  None),
-    10: ("palace-center",  None),
-    11: ("palace-conner",  None),
-    12: ("red-advisor",    "A"),
-    13: ("red-cannon",     "C"),
-    14: ("red-chariot",    "R"),
-    15: ("red-elephant",   "B"),
-    16: ("red-general",    "K"),
-    17: ("red-horse",      "N"),
-    18: ("red-soldier",    "P"),
+    7:  ("board-conner",   None),
+    8:  ("palace-bottom",  None),
+    9:  ("palace-center",  None),
+    10: ("palace-conner",  None),
+    11: ("red-advisor",    "A"),
+    12: ("red-cannon",     "C"),
+    13: ("red-chariot",    "R"),
+    14: ("red-elephant",   "B"),
+    15: ("red-general",    "K"),
+    16: ("red-horse",      "N"),
+    17: ("red-soldier",    "P"),
 }
 
 # Piece / landmark ID sets for ItemDetector
@@ -53,13 +54,12 @@ PIECE_CLASS_IDS = {cid for cid, (_, fen) in ITEM_CLASSES.items() if fen is not N
 LANDMARK_CLASS_IDS = {cid for cid, (_, fen) in ITEM_CLASSES.items() if fen is None}
 ITEM_CLASS_NAMES = [ITEM_CLASSES[i][0] for i in range(len(ITEM_CLASSES))]
 
-# Landmark class name → ID
+# Landmark class name → ID (v8: board-border removed)
 LANDMARK_NAMES = {
-    "board-border":  7,
-    "board-conner":  8,
-    "palace-bottom": 9,
-    "palace-center": 10,
-    "palace-conner": 11,
+    "board-conner":  7,
+    "palace-bottom": 8,
+    "palace-center": 9,
+    "palace-conner": 10,
 }
 
 # =============================================================

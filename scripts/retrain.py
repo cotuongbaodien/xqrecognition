@@ -87,21 +87,23 @@ def main():
         "--name", name,
     ], cwd=PROJECT_ROOT)
 
-    # 5. Test
-    print(f"\n[5/5] Testing on test/ images...")
+    # 5. Test — output into a version-named folder so each build keeps its
+    # own visualizations for side-by-side comparison (test/output_<name>/).
+    out_dir = f"test/output_{name}"
+    print(f"\n[5/5] Testing on test/ images → {out_dir}/ ...")
     test_dir = PROJECT_ROOT / "test"
     if test_dir.exists() and any(test_dir.glob("*.png")) or any(test_dir.glob("*.jpg")):
         subprocess.check_call([
             sys.executable, "detect.py",
             "--dir", "test",
-            "--output", "test/output",
+            "--output", out_dir,
             "--confidence", "0.3",
-            "--no-visualize",
         ], cwd=PROJECT_ROOT)
     else:
         print("  No test/ images found. Skipping.")
 
     print(f"\n=== Done. Model: boarddetection/models/items.pt ===")
+    print(f"Visualizations: {out_dir}/")
     print(f"Backup: models/backups/items_pre_{name}.pt")
     print(f"\nIf results worse than baseline, rollback:")
     print(f"  cp models/backups/items_pre_{name}.pt boarddetection/models/items.pt")
