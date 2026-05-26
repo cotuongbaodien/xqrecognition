@@ -50,7 +50,12 @@ def train_items(
         name=name,
         exist_ok=False,
         seed=seed,
-        # Augmentation — generous since users photograph from arbitrary angles
+        # Augmentation — generous since users photograph from arbitrary angles.
+        # NOTE: tried gentler augment in v10 (degrees=15, mosaic=0.5, hsv_v=0.5)
+        # — val mAP improved (0.80 vs 0.78) but REAL-WORLD test got WORSE
+        # (mirror-tolerant EXACT 7/28 vs v9's 11/28). Heavy rotation/mosaic
+        # genuinely helps generalization to tilted/varied real photos even
+        # though clean-val metrics dip. Kept the heavier v9 config.
         flipud=0.0,            # Don't flip vertically (chars would be upside-down)
         fliplr=0.5,            # Horizontal flip ok (board is left-right symmetric)
         degrees=45.0,          # Rotation up to ±45° (covers most camera tilts)
