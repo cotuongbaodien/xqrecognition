@@ -79,7 +79,7 @@ def main():
     subprocess.check_call([
         sys.executable, "scripts/train_items.py",
         "--data", f"data/{name}/data.yaml",
-        "--pretrained", "yolov8s.pt",
+        "--pretrained", "yolo11s.pt",
         "--epochs", str(args.epochs),
         "--batch-size", "16",
         "--device", args.device,

@@ -22,7 +22,7 @@ def train_items(
     batch_size: int = 16,
     img_size: int = 640,
     device: str = "cuda",
-    pretrained: str = "yolov8s.pt",
+    pretrained: str = "yolo11s.pt",
     seed: int = 42,
     name: str = "items",
 ):
@@ -89,7 +89,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--img-size", type=int, default=640)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--pretrained", default="yolov8s.pt")
+    parser.add_argument("--pretrained", default="yolo11s.pt")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--name", default="items")
     args = parser.parse_args()

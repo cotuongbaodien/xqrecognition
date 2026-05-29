@@ -23,7 +23,7 @@ def train_board(args):
         img_size=args.img_size,
         device=args.device,
         resume=args.resume,
-        pretrained=args.pretrained or "yolov8n-seg.pt",
+        pretrained=args.pretrained or "yolo11n-seg.pt",
     )
 
 
@@ -38,7 +38,7 @@ def train_pieces(args):
         img_size=args.img_size,
         device=args.device,
         resume=args.resume,
-        pretrained=args.pretrained or "yolov8n.pt",
+        pretrained=args.pretrained or "yolo11s.pt",
     )
 
 
