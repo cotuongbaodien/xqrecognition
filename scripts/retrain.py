@@ -52,11 +52,35 @@ def main():
     n_imgs = len(list((dest / "train" / "images").glob("*")))
     print(f"  → {n_imgs} images extracted")
 
-    # 2. Split 80/15/5
-    print(f"\n[2/5] Splitting 80/15/5...")
-    subprocess.check_call([
-        sys.executable, "scripts/split_items.py", "--dir", f"data/{name}"
-    ], cwd=PROJECT_ROOT)
+    # 2. Split 80/15/5 — but SKIP if the export is already pre-split by
+    # Roboflow (has valid/ + test/). Re-splitting a pre-split set would
+    # double-split it and corrupt the train/valid/test folders.
+    pre_split = (dest / "valid" / "images").exists() and (dest / "test" / "images").exists()
+    if pre_split:
+        print(f"\n[2/5] Pre-split detected (train/valid/test present) — skipping split_items.")
+        classes = [
+            "black-advisor", "black-cannon", "black-chariot", "black-elephant",
+            "black-general", "black-horse", "black-soldier", "board-conner",
+            "palace-bottom", "palace-center", "palace-conner", "red-advisor",
+            "red-cannon", "red-chariot", "red-elephant", "red-general",
+            "red-horse", "red-soldier",
+        ]
+        yaml_text = (
+            f"path: {dest.resolve()}\n"
+            "train: train/images\nval: valid/images\ntest: test/images\n\n"
+            f"nc: {len(classes)}\nnames:\n"
+        )
+        for i, c in enumerate(classes):
+            yaml_text += f"  {i}: {c}\n"
+        (dest / "data.yaml").write_text(yaml_text, encoding="utf-8")
+        for split in ("train", "valid", "test"):
+            k = len(list((dest / split / "images").glob("*")))
+            print(f"  {split}: {k} images")
+    else:
+        print(f"\n[2/5] Splitting 80/15/5...")
+        subprocess.check_call([
+            sys.executable, "scripts/split_items.py", "--dir", f"data/{name}"
+        ], cwd=PROJECT_ROOT)
 
     if args.skip_train:
         print("\nSkip-train flag set. Done.")
