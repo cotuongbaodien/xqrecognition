@@ -99,7 +99,11 @@ class ItemDetector:
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        results = self.model(image, conf=confidence, verbose=False)
+        # imgsz=960 (vs default 640): pieces are small in a full-board photo;
+        # the larger input lifts recall + cuts mã/xe misclassification.
+        # On the 86-image test set this raised exact-FEN 48 -> 54 for only
+        # ~+11ms/frame on GPU (TTA gave no extra gain and was 4x slower).
+        results = self.model(image, conf=confidence, imgsz=960, verbose=False)
 
         pieces: List[DetectedPiece] = []
         landmarks: Dict[str, List[Landmark]] = {}
