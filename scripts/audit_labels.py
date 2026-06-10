@@ -95,6 +95,7 @@ def main():
     n_pieces = 0
     n_wrong = 0
     n_missed = 0
+    n_extra = 0
 
     for i, img in enumerate(imgs):
         src = src_name(img.name)
@@ -141,26 +142,60 @@ def main():
                     "source_image": src,
                     "file": img.name,
                 })
+
+        # Extra detections: model sees a piece where NO label exists -> a
+        # candidate MISSING LABEL (under-annotation). These under-labeled
+        # pieces are why the model later misses them at inference.
+        for pbox, pc, pconf in preds:
+            if max((iou(lbox, pbox) for _lc, lbox in labels), default=0.0) < args.iou:
+                n_extra += 1
+                rows.append({
+                    "type": "MISSING_LABEL",
+                    "category": category(names[pc]),
+                    "label_class": "(none)",
+                    "model_class": names[pc],
+                    "model_conf": round(pconf, 2),
+                    "iou": 0.0,
+                    "cell": cell_label(pbox, w, h),
+                    "source_image": src,
+                    "file": img.name,
+                })
         if (i + 1) % 250 == 0:
             print(f"  {i + 1}/{len(imgs)} imgs | {len(seen_src)} sources | "
-                  f"{n_wrong} wrong-class, {n_missed} missed")
+                  f"{n_wrong} wrong, {n_missed} missed, {n_extra} missing-label")
 
-    # Split into 3 files by the user's fix priority:
-    #   1. fix label   -> WRONG_CLASS on pieces
-    #   2. add piece   -> MODEL_MISSED on pieces
-    #   3. landmark    -> anything on landmark classes
+    # Split into files by the user's fix priority:
+    #   1. fix label     -> WRONG_CLASS on pieces (label has wrong class)
+    #   2. add piece     -> MISSING_LABEL on pieces (piece unlabeled -> add it)
+    #   3. model misses  -> MODEL_MISSED on pieces (labeled but model can't see)
+    #   4. landmark      -> anything on landmark classes
     buckets = {
-        "audit_1_fix_label.csv":   [r for r in rows if r["category"] == "piece" and r["type"] == "WRONG_CLASS"],
-        "audit_2_add_piece.csv":   [r for r in rows if r["category"] == "piece" and r["type"] == "MODEL_MISSED"],
-        "audit_3_landmark.csv":    [r for r in rows if r["category"] == "landmark"],
+        "audit_1_fix_label.csv":     [r for r in rows if r["category"] == "piece" and r["type"] == "WRONG_CLASS"],
+        "audit_2_missing_label.csv": [r for r in rows if r["category"] == "piece" and r["type"] == "MISSING_LABEL"],
+        "audit_3_model_missed.csv":  [r for r in rows if r["category"] == "piece" and r["type"] == "MODEL_MISSED"],
+        "audit_4_landmark.csv":      [r for r in rows if r["category"] == "landmark"],
     }
     fields = ["type", "category", "label_class", "model_class", "model_conf",
-              "iou", "cell", "source_image", "file"]
+              "iou", "cell", "roboflow_name", "source_image", "file"]
+    _EXTS = {"jpg", "jpeg", "png", "bmp", "webp"}
+
+    def roboflow_name(src):
+        """Bare original name (Roboflow-searchable): drop trailing ext tokens."""
+        parts = src.split("_")
+        while parts and parts[-1].lower() in _EXTS:
+            parts.pop()
+        return "_".join(parts)
+
     from collections import Counter
     print(f"\n=== Audit done ===")
     print(f"Sources checked : {len(seen_src)} | pieces compared : {n_pieces}")
     for fname, bucket in buckets.items():
-        bucket.sort(key=lambda x: (x["label_class"], -(x["model_conf"] or 0)))
+        # sort by the meaningful class (label for label-based rows, model for
+        # MISSING_LABEL where label is "(none)"), then by confidence
+        bucket.sort(key=lambda x: (x["model_class"] if x["label_class"] == "(none)" else x["label_class"],
+                                   -(x["model_conf"] or 0)))
+        for r in bucket:
+            r["roboflow_name"] = roboflow_name(r["source_image"])
         p = PROJECT_ROOT / fname
         with p.open("w", newline="", encoding="utf-8") as f:
             wri = csv.DictWriter(f, fieldnames=fields)
