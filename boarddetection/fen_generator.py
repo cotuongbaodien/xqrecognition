@@ -366,61 +366,64 @@ class FENGenerator:
 
     def detect_board_orientation(self, board_state: BoardState) -> str:
         """
-        Detect board orientation based on piece positions.
-        Standard Xiangqi: Black at top (row 0-4), Red at bottom (row 5-9).
+        Detect 180° vertical orientation. Standard Xiangqi: black at top
+        (rows 0-4), red at bottom (rows 5-9).
 
-        Uses General (K/k) positions as primary signal, falls back to
-        average piece positions if generals not found.
+        Uses a MAJORITY VOTE of three independent signals so a single
+        misread piece — especially a misclassified general, which is the
+        exact failure mode that used to flip the whole board — cannot
+        decide orientation on its own:
+          1. General (K/k) rows.
+          2. Colour centroid of ALL pieces (red should be the lower half).
+          3. Palace pieces (K/A vs k/a) sitting in their expected half.
 
-        Returns:
-            'standard' if black is at top, 'flipped' if red is at top.
+        Returns 'standard' or 'flipped'.
         """
-        red_general_row = None
-        black_general_row = None
-        red_y_sum = 0
-        red_count = 0
-        black_y_sum = 0
-        black_count = 0
+        red_gen = black_gen = None
+        red_rows, black_rows = [], []        # every piece, by colour
+        red_palace, black_palace = [], []    # generals + advisors only
 
         for row in range(GRID_ROWS):
             for col in range(GRID_COLS):
-                piece = board_state.board[row][col]
-                if piece:
-                    if piece == 'K':
-                        red_general_row = row
-                    elif piece == 'k':
-                        black_general_row = row
-                    if piece.isupper():
-                        red_y_sum += row
-                        red_count += 1
-                    else:
-                        black_y_sum += row
-                        black_count += 1
+                p = board_state.board[row][col]
+                if not p:
+                    continue
+                if p == 'K':
+                    red_gen = row
+                elif p == 'k':
+                    black_gen = row
+                (red_rows if p.isupper() else black_rows).append(row)
+                if p in ('K', 'A'):
+                    red_palace.append(row)
+                elif p in ('k', 'a'):
+                    black_palace.append(row)
 
-        # Primary: use General positions (most reliable)
-        if red_general_row is not None and black_general_row is not None:
-            if red_general_row < black_general_row:
-                return 'flipped'
+        votes = []
+
+        # Signal 1: general positions
+        if red_gen is not None and black_gen is not None:
+            votes.append('standard' if red_gen > black_gen else 'flipped')
+        elif red_gen is not None:
+            votes.append('standard' if red_gen >= 5 else 'flipped')
+        elif black_gen is not None:
+            votes.append('standard' if black_gen < 5 else 'flipped')
+
+        # Signal 2: colour centroid of all pieces (robust to a few misreads)
+        if red_rows and black_rows:
+            red_avg = sum(red_rows) / len(red_rows)
+            black_avg = sum(black_rows) / len(black_rows)
+            votes.append('standard' if red_avg > black_avg else 'flipped')
+
+        # Signal 3: how many palace pieces fall in their expected half
+        if red_palace or black_palace:
+            std_ok = sum(r >= 5 for r in red_palace) + sum(r < 5 for r in black_palace)
+            flp_ok = sum(r < 5 for r in red_palace) + sum(r >= 5 for r in black_palace)
+            if std_ok != flp_ok:
+                votes.append('standard' if std_ok > flp_ok else 'flipped')
+
+        if not votes:
             return 'standard'
-
-        # If only one general found, check if it's in expected half
-        if red_general_row is not None:
-            # Red general should be in rows 7-9 (standard)
-            return 'flipped' if red_general_row < 5 else 'standard'
-        if black_general_row is not None:
-            # Black general should be in rows 0-2 (standard)
-            return 'flipped' if black_general_row >= 5 else 'standard'
-
-        # Fallback: use average piece positions
-        if red_count == 0 or black_count == 0:
-            return 'standard'
-
-        red_avg_row = red_y_sum / red_count
-        black_avg_row = black_y_sum / black_count
-
-        if red_avg_row < black_avg_row:
-            return 'flipped'
-        return 'standard'
+        return 'flipped' if votes.count('flipped') > votes.count('standard') else 'standard'
 
     def flip_board(self, board_state: BoardState) -> BoardState:
         """

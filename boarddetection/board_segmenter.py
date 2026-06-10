@@ -57,6 +57,20 @@ class BoardSegmenter:
         bl = min(pts, key=lambda p: p[0] - p[1])
         if len({tl, tr, bl, br}) != 4:
             return None
+
+        # Canonicalize 90° rotation. The grid builder always maps the tl→tr
+        # edge to the 9 columns and tl→bl to the 10 rows. A real board is
+        # taller than wide (10 ranks vs 9 files, ratio ≈ 1.125), so the
+        # rows edge must be the LONGER one. If the capture is landscape
+        # (phone portrait over a sideways board) the long edge lands on
+        # tl→tr instead — detect that and rotate the corner labels 90° so
+        # the 10-rank axis becomes the rows axis. The remaining 180°
+        # ambiguity is resolved later by detect_board_orientation().
+        cols_edge = np.hypot(tr[0] - tl[0], tr[1] - tl[1])  # current cols axis
+        rows_edge = np.hypot(bl[0] - tl[0], bl[1] - tl[1])  # current rows axis
+        if cols_edge > 1.05 * rows_edge:
+            tl, tr, bl, br = tr, br, tl, bl
+
         return tl, tr, bl, br
 
     @staticmethod
