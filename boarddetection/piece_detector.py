@@ -249,36 +249,47 @@ class PieceDetector:
     def non_max_suppression(
         self,
         pieces: List[DetectedPiece],
-        iou_threshold: float = 0.5
-    ) -> List[DetectedPiece]:
+        iou_threshold: float = 0.5,
+        return_suppressed: bool = False,
+    ):
         """
         Apply Non-Maximum Suppression to remove overlapping detections.
 
         Args:
             pieces: List of detected pieces.
             iou_threshold: IoU threshold for suppression.
+            return_suppressed: Also return the suppressed detections. A
+                suppressed detection at the same spot is often the correct
+                class when the kept one violates piece-count rules.
 
         Returns:
-            Filtered list of pieces.
+            Filtered list of pieces, or (kept, suppressed) if
+            return_suppressed.
         """
         if not pieces:
-            return []
+            return ([], []) if return_suppressed else []
 
         # Sort by confidence (highest first)
         pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)
 
         keep = []
+        suppressed = []
         while pieces:
             # Keep the piece with highest confidence
             best = pieces.pop(0)
             keep.append(best)
 
             # Filter out pieces with high IoU overlap
-            pieces = [
-                p for p in pieces
-                if self._compute_iou(best.bbox, p.bbox) < iou_threshold
-            ]
+            remaining = []
+            for p in pieces:
+                if self._compute_iou(best.bbox, p.bbox) < iou_threshold:
+                    remaining.append(p)
+                else:
+                    suppressed.append(p)
+            pieces = remaining
 
+        if return_suppressed:
+            return keep, suppressed
         return keep
 
     def _compute_iou(

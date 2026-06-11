@@ -11,6 +11,8 @@ import cv2
 import numpy as np
 
 from .settings import (
+    GRID_COLS,
+    GRID_ROWS,
     ITEMS_MODEL,
     MODELS_DIR,
     PIECE_CONFIDENCE_THRESHOLD,
@@ -92,6 +94,8 @@ class XiangqiRecognizer:
         image_path: str,
         piece_confidence: float = PIECE_CONFIDENCE_THRESHOLD,
         visualize: bool = False,
+        nms_iou: float = 0.35,
+        snap_ratio: float = 0.6,
         **_legacy
     ) -> RecognitionResult:
         """
@@ -113,7 +117,9 @@ class XiangqiRecognizer:
         return self.recognize_image(
             image,
             piece_confidence=piece_confidence,
-            visualize=visualize
+            visualize=visualize,
+            nms_iou=nms_iou,
+            snap_ratio=snap_ratio,
         )
 
     def recognize_image(
@@ -121,6 +127,8 @@ class XiangqiRecognizer:
         image: np.ndarray,
         piece_confidence: float = PIECE_CONFIDENCE_THRESHOLD,
         visualize: bool = False,
+        nms_iou: float = 0.35,
+        snap_ratio: float = 0.6,
         **_legacy
     ) -> RecognitionResult:
         """
@@ -141,8 +149,8 @@ class XiangqiRecognizer:
         # Single forward pass: pieces + landmarks from items.pt
         item_result = self.item_detector.detect(image, confidence=piece_confidence)
 
-        pieces = self.piece_detector.non_max_suppression(
-            item_result.pieces, iou_threshold=0.35
+        pieces, suppressed = self.piece_detector.non_max_suppression(
+            item_result.pieces, iou_threshold=nms_iou, return_suppressed=True
         )
         # Cap at max 32 pieces (maximum in Xiangqi)
         if len(pieces) > 32:
@@ -178,7 +186,9 @@ class XiangqiRecognizer:
 
         # Step 3: Map pieces to grid
         if grid is not None:
-            board_state = self.fen_generator.map_pieces_to_grid(pieces, grid)
+            board_state = self.fen_generator.map_pieces_to_grid(
+                pieces, grid, max_distance_ratio=snap_ratio
+            )
         else:
             board_state = self.fen_generator.map_pieces_to_grid_by_interpolation(
                 pieces, w, h
@@ -189,13 +199,15 @@ class XiangqiRecognizer:
         # We do NOT apply horizontal mirror - the consuming app handles mirror.
         # Mirror auto-detection is unreliable and can produce wrong results.
         orientation = self.fen_generator.detect_board_orientation(board_state)
-        if orientation == 'flipped':
+        flipped = orientation == 'flipped'
+        if flipped:
             board_state = self.fen_generator.flip_board(board_state)
 
-        # Step 5: Validate and correct using game rules
-        piece_confidences = {}
-        for piece in pieces:
-            cx, cy = piece.center
+        # Step 5: Validate and correct using game rules.
+        # Cell keys must live in the FINAL (post-flip) board frame, so
+        # transform them alongside the flip — otherwise the validator looks
+        # up confidences at the wrong cells on flipped boards.
+        def to_cell(cx, cy):
             if grid is not None:
                 row, col = grid.get_nearest_cell(cx, cy)
             else:
@@ -210,9 +222,25 @@ class XiangqiRecognizer:
                 row = round((cy - min_y) / cell_h)
                 col = max(0, min(8, col))
                 row = max(0, min(9, row))
-            piece_confidences[(row, col)] = piece.confidence
+            if flipped:
+                row, col = GRID_ROWS - 1 - row, GRID_COLS - 1 - col
+            return row, col
+
+        piece_confidences = {}
+        for piece in pieces:
+            piece_confidences[to_cell(*piece.center)] = piece.confidence
+
+        # NMS-suppressed detections per cell: second-opinion classes for the
+        # validator when a kept piece exceeds its legal count.
+        alternates = {}
+        if grid is not None:
+            for p in suppressed:
+                cell = to_cell(*p.center)
+                alternates.setdefault(cell, []).append(
+                    (p.fen_symbol, p.confidence))
+
         board_state = self.rules_validator.validate_and_correct(
-            board_state, piece_confidences
+            board_state, piece_confidences, alternates
         )
 
         # Step 6: Generate FEN

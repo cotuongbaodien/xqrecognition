@@ -55,7 +55,8 @@ class RulesValidator:
     def validate_and_correct(
         self,
         board_state: BoardState,
-        piece_confidences: Optional[Dict[Tuple[int, int], float]] = None
+        piece_confidences: Optional[Dict[Tuple[int, int], float]] = None,
+        alternates: Optional[Dict[Tuple[int, int], List[Tuple[str, float]]]] = None,
     ) -> BoardState:
         """
         Validate board state and auto-correct violations.
@@ -63,6 +64,12 @@ class RulesValidator:
         Args:
             board_state: Current board state.
             piece_confidences: Map of (row, col) -> confidence score.
+            alternates: Map of (row, col) -> [(fen_symbol, confidence), ...]
+                second-opinion classes from NMS-suppressed detections. When
+                an excess piece must be removed, a legal alternate class at
+                the same cell is substituted instead of emptying the cell —
+                the detector clearly saw a piece there, it just disagreed
+                with itself about the class.
 
         Returns:
             Corrected BoardState.
@@ -70,17 +77,60 @@ class RulesValidator:
         if piece_confidences is None:
             piece_confidences = {}
 
-        board_state = self._fix_excess_pieces(board_state, piece_confidences)
+        board_state = self._fix_excess_pieces(
+            board_state, piece_confidences, alternates or {})
         board_state = self._fix_invalid_positions(board_state, piece_confidences)
 
         return board_state
 
+    def _count_on_board(self, board_state: BoardState, symbol: str) -> int:
+        return sum(
+            1
+            for row in range(GRID_ROWS)
+            for col in range(GRID_COLS)
+            if board_state.board[row][col] == symbol
+        )
+
+    def _is_legal_cell(self, symbol: str, row: int, col: int) -> bool:
+        if symbol in VALID_POSITIONS:
+            return (row, col) in VALID_POSITIONS[symbol]
+        if symbol in PAWN_CONSTRAINTS:
+            c = PAWN_CONSTRAINTS[symbol]
+            return c['min_row'] <= row <= c['max_row']
+        return True
+
+    def _best_alternate(
+        self,
+        board_state: BoardState,
+        cell: Tuple[int, int],
+        dropped_symbol: str,
+        alternates: Dict[Tuple[int, int], List[Tuple[str, float]]],
+    ) -> Optional[str]:
+        """Best legal substitute class for a removed excess piece."""
+        row, col = cell
+        candidates = sorted(
+            alternates.get(cell, []), key=lambda a: a[1], reverse=True)
+        for symbol, _conf in candidates:
+            if symbol == dropped_symbol:
+                continue
+            if self._count_on_board(board_state, symbol) >= \
+                    MAX_PIECE_COUNTS.get(symbol, 99):
+                continue
+            if not self._is_legal_cell(symbol, row, col):
+                continue
+            return symbol
+        return None
+
     def _fix_excess_pieces(
         self,
         board_state: BoardState,
-        confidences: Dict[Tuple[int, int], float]
+        confidences: Dict[Tuple[int, int], float],
+        alternates: Optional[Dict[Tuple[int, int], List[Tuple[str, float]]]] = None,
     ) -> BoardState:
-        """Remove excess pieces, keeping highest confidence ones."""
+        """Remove excess pieces, keeping highest confidence ones. Where an
+        NMS-suppressed detection offers a legal second-opinion class at the
+        same cell, substitute it instead of leaving the cell empty."""
+        alternates = alternates or {}
         counts: Dict[str, List[Tuple[int, int, float]]] = {}
 
         for row in range(GRID_ROWS):
@@ -99,6 +149,10 @@ class RulesValidator:
                 positions.sort(key=lambda x: x[2], reverse=True)
                 for row, col, _ in positions[max_count:]:
                     board_state.board[row][col] = None
+                    substitute = self._best_alternate(
+                        board_state, (row, col), piece_type, alternates)
+                    if substitute:
+                        board_state.board[row][col] = substitute
 
         # Rebuild pieces list
         board_state.pieces = []
