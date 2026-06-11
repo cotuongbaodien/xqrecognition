@@ -25,6 +25,7 @@ def train_items(
     pretrained: str = "yolo11s.pt",
     seed: int = 42,
     name: str = "items",
+    deploy: bool = True,
 ):
     data_path = Path(data_yaml)
 
@@ -71,13 +72,19 @@ def train_items(
     )
 
     best = Path(results.save_dir) / "weights" / "best.pt"
-    out = MODELS_DIR / "items.pt"
-    backup = MODELS_DIR / f"items_{name}.pt"
     if best.exists():
-        shutil.copy(best, out)
+        backup_dir = PROJECT_ROOT / "models" / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup = backup_dir / f"items_{name}.pt"
         shutil.copy(best, backup)
-        print(f"\nBest model saved: {out}")
-        print(f"Backup saved: {backup}")
+        print(f"\nBackup saved: {backup}")
+        if deploy:
+            out = MODELS_DIR / "items.pt"
+            shutil.copy(best, out)
+            print(f"Best model deployed: {out}")
+        else:
+            print("Deploy skipped (--no-deploy): caller decides after FEN gate.")
+            print(f"Candidate weights: {best}")
 
     return results
 
@@ -92,6 +99,8 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained", default="yolo11s.pt")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--name", default="items")
+    parser.add_argument("--no-deploy", action="store_true",
+                        help="Don't copy best.pt to models/items.pt (caller gates deploy)")
     args = parser.parse_args()
 
     train_items(
@@ -103,4 +112,5 @@ if __name__ == "__main__":
         pretrained=args.pretrained,
         seed=args.seed,
         name=args.name,
+        deploy=not args.no_deploy,
     )
