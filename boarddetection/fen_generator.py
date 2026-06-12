@@ -115,8 +115,15 @@ class FENGenerator:
 
         max_dist = max(grid.cell_width, grid.cell_height) * max_distance_ratio
 
-        # Sort by confidence descending so high-confidence pieces get priority
-        sorted_pieces = sorted(pieces, key=lambda p: p.confidence, reverse=True)
+        # Generals first, then confidence descending. The general is the one
+        # piece a position cannot lose: on tilted photos perspective can snap
+        # a general and its neighbour onto the same cell, and pure-confidence
+        # order let a 0.91 advisor erase a 0.90 general → kingless FEN broke
+        # the mobile app with "in check" on both sides (2026-06-12).
+        sorted_pieces = sorted(
+            pieces,
+            key=lambda p: (p.fen_symbol not in ("K", "k"), -p.confidence),
+        )
 
         for piece in sorted_pieces:
             cx, cy = piece.center
@@ -132,23 +139,34 @@ class FENGenerator:
                 if dist > max_dist:
                     continue
 
-            # Collision resolution: keep piece with higher confidence
-            if board[row][col] is None:
-                board[row][col] = piece.fen_symbol
-                board_confidence[row][col] = piece.confidence
-                piece_positions.append((row, col, piece.fen_symbol))
-            elif piece.confidence > board_confidence[row][col]:
-                # Replace with higher confidence piece
-                old_symbol = board[row][col]
-                board[row][col] = piece.fen_symbol
-                board_confidence[row][col] = piece.confidence
-                piece_positions = [
-                    (r, c, s) for r, c, s in piece_positions
-                    if not (r == row and c == col)
-                ]
-                piece_positions.append((row, col, piece.fen_symbol))
+            # Placement order = priority order, so an occupied cell always
+            # holds a piece that outranks this one. Instead of dropping the
+            # loser (it IS on the board, just perspective-squeezed), shift it
+            # to the nearest free cell still within snapping distance.
+            if board[row][col] is not None:
+                alt = self._nearest_free_cell(grid, cx, cy, board, max_dist)
+                if alt is None:
+                    continue
+                row, col = alt
+
+            board[row][col] = piece.fen_symbol
+            board_confidence[row][col] = piece.confidence
+            piece_positions.append((row, col, piece.fen_symbol))
 
         return BoardState(board=board, pieces=piece_positions)
+
+    @staticmethod
+    def _nearest_free_cell(grid, cx, cy, board, max_dist):
+        """Nearest unoccupied grid cell within max_dist of (cx, cy), or None."""
+        pts = grid.points.reshape(-1, 2)
+        dists = np.sqrt(((pts - np.array([cx, cy])) ** 2).sum(axis=1))
+        for idx in np.argsort(dists):
+            if max_dist > 0 and dists[idx] > max_dist:
+                return None
+            row, col = divmod(int(idx), GRID_COLS)
+            if board[row][col] is None:
+                return row, col
+        return None
 
     def map_pieces_to_grid_by_interpolation(
         self,

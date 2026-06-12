@@ -20,7 +20,7 @@ from .settings import (
 from .board_detector import BoardDetector, Grid
 from .board_segmenter import BoardSegmenter
 from .piece_detector import PieceDetector, DetectedPiece
-from .item_detector import ItemDetector
+from .item_detector import ItemDetector, ItemDetectionResult
 from .fen_generator import FENGenerator, BoardState
 from .rules_validator import RulesValidator
 
@@ -36,6 +36,9 @@ class RecognitionResult:
     confidence: float
     visualization: Optional[np.ndarray] = None
     errors: List[str] = field(default_factory=list)
+    # Raw detector output (pre-NMS pieces + all landmarks, original image
+    # coords) — needed by dataset_saver to write full 18-class YOLO labels.
+    item_result: Optional[ItemDetectionResult] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
@@ -265,6 +268,7 @@ class XiangqiRecognizer:
             confidence=avg_confidence,
             visualization=visualization,
             errors=errors,
+            item_result=item_result,
         )
 
     @staticmethod
