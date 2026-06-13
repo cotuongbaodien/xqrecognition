@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,11 +28,20 @@ from fastapi.responses import JSONResponse
 from .dataset_saver import save_sample
 from .pipeline import XiangqiRecognizer
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+# uvicorn's CLI reconfigures logging after import (root → WARNING, no
+# handlers), so basicConfig() here is a no-op. Attach our own stdout handler
+# directly to the "ocr_service" logger (children like "ocr_service.dataset"
+# inherit it) so detect/dataset lines reach `docker logs`. propagate=False
+# avoids double-printing if uvicorn later adds a root handler.
 logger = logging.getLogger("ocr_service")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+    logger.addHandler(_handler)
+    logger.propagate = False
 
 MAX_BYTES = 8 * 1024 * 1024
 MIN_CONFIDENCE = float(os.environ.get("OCR_MIN_CONFIDENCE", "0.35"))
