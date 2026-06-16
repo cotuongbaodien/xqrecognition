@@ -911,6 +911,14 @@ class ItemDetector:
             return standard_portrait()
         return corrs
 
+    # Palace-square corner intersections in grid (col, row) coords. The seg
+    # palace mask, reduced to a quad, traces these exact intersections.
+    _PALACE_CORNER_TARGETS = [
+        (3, 0), (5, 0), (3, 2), (5, 2),   # black (top) palace square
+        (3, 7), (5, 7), (3, 9), (5, 9),   # red (bottom) palace square
+    ]
+    _PALACE_CENTER_TARGETS = [(4, 1), (4, 8)]
+
     @staticmethod
     def build_grid_from_quad(
         quad: Tuple[Tuple[float, float], ...],
@@ -920,70 +928,71 @@ class ItemDetector:
         palace_bottoms: Optional[List["Landmark"]] = None,
         image_shape: Optional[Tuple[int, int]] = None,
     ) -> Optional[Grid]:
-        """Build a 9x10 grid from 4 board corners (from segmentation mask).
-        quad is (tl, tr, bl, br) ordered by x±y extremes.
+        """Build a 9x10 grid from the 4 board corners (segmentation quad).
 
-        If palace-centers are detected, they refine the grid: they sit at the
-        FIXED positions (col 4, row 1) and (col 4, row 8) — strong interior
-        anchors. After the initial 4-corner grid, each detected palace-center
-        is assigned to its nearest of those two positions and added as an
-        extra correspondence; the homography is re-fit (least-squares) so the
-        grid also passes through them, correcting interior row/col alignment
-        that 4 imperfect seg corners alone can miss.
+        palace_centers / palace_corners / palace_bottoms are used ONLY to
+        determine ORIENTATION (the rows axis -> the 90deg / cam-doc fix) via
+        _corners_to_correspondences. They do NOT alter the grid geometry, which
+        comes purely from the board quad: letting palace anchors re-fit the
+        homography regressed the grid on perspective / frame-filling boards
+        (the palace mask is noisier than the board quad), so the board quad
+        alone is the geometry source and the palace is the orientation source.
         """
         tl, tr, bl, br = quad
         corrs = ItemDetector._corners_to_correspondences(
             tl, tr, bl, br, pieces, palace_centers,
             palace_corners, palace_bottoms,
         )
-        grid = ItemDetector._grid_from_4_corners(corrs, image_shape)
-        if grid is None or not palace_centers:
-            return grid
+        return ItemDetector._grid_from_4_corners(corrs, image_shape)
 
-        # Assign each detected palace-center to nearest of (4,1)/(4,8) using
-        # the initial grid, then re-fit with corners + palace-centers.
-        pc_targets = [(4, 1), (4, 8)]
-        extra = []
-        used = set()
-        for lm in palace_centers:
-            best = None
-            best_d = float("inf")
-            for (col, row) in pc_targets:
-                if (col, row) in used:
-                    continue
-                exp = grid.get_point(row, col)
-                if exp is None:
-                    continue
-                d = (lm.center[0] - exp.x) ** 2 + (lm.center[1] - exp.y) ** 2
-                if d < best_d:
-                    best_d = d
-                    best = (col, row)
-            if best is not None:
-                used.add(best)
-                extra.append((best[0], best[1], lm.center[0], lm.center[1]))
-        if not extra:
-            return grid
-
-        refined = ItemDetector._grid_from_correspondences(
-            corrs + extra, image_shape
-        )
-        return refined if refined is not None else grid
+    @staticmethod
+    def _assign_to_targets(points, targets, grid):
+        """Greedily assign image points to their nearest known grid target
+        (each target used once), returning [(col, row, x, y)] correspondences.
+        A point is only accepted when it lies within ~0.6 cell of the target's
+        projected position, so spurious detections are ignored."""
+        max_d = 0.6 * min(grid.cell_width, grid.cell_height)
+        proj = {}
+        for (col, row) in targets:
+            p = grid.get_point(row, col)
+            if p is not None:
+                proj[(col, row)] = (p.x, p.y)
+        pairs = []
+        for pt in points:
+            for (col, row), (ex, ey) in proj.items():
+                d = ((pt[0] - ex) ** 2 + (pt[1] - ey) ** 2) ** 0.5
+                pairs.append((d, pt, (col, row)))
+        pairs.sort(key=lambda t: t[0])
+        used_t, used_p, out = set(), set(), []
+        for d, pt, tgt in pairs:
+            if d > max_d or tgt in used_t or id(pt) in used_p:
+                continue
+            used_t.add(tgt)
+            used_p.add(id(pt))
+            out.append((tgt[0], tgt[1], float(pt[0]), float(pt[1])))
+        return out
 
     @staticmethod
     def _grid_from_correspondences(
         corrs: List[Tuple[float, float, float, float]],
         image_shape: Optional[Tuple[int, int]] = None,
+        ransac: bool = False,
     ) -> Optional[Grid]:
-        """Least-squares homography from >=4 (col,row)->(x,y) correspondences,
-        then project the full 9x10 lattice. Used to fold in interior anchors
-        (palace-centers) on top of the 4 board corners."""
+        """Homography from >=4 (col,row)->(x,y) correspondences, then project
+        the full 9x10 lattice. Used to fold interior anchors (palace corners /
+        centers) in with the 4 board corners. With ransac=True a single
+        mis-detected anchor is rejected as an outlier instead of warping the
+        whole lattice."""
         from .settings import GRID_COLS, GRID_ROWS
         if len(corrs) < 4:
             return None
         src = np.array([[c[0], c[1]] for c in corrs], dtype=np.float32)
         dst = np.array([[c[2], c[3]] for c in corrs], dtype=np.float32)
         try:
-            H, _ = cv2.findHomography(src, dst, 0)
+            if ransac and len(corrs) >= 5:
+                H, _ = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
+            else:
+                H, _ = cv2.findHomography(src, dst, 0)
         except cv2.error:
             return None
         if H is None:
@@ -1040,6 +1049,22 @@ class ItemDetector:
         dy_vec = grid_points[1:, :, :] - grid_points[:-1, :, :]
         cell_w = float(np.mean(np.linalg.norm(dx_vec, axis=2)))
         cell_h = float(np.mean(np.linalg.norm(dy_vec, axis=2)))
+        if cell_w < 5 or cell_h < 5:
+            return None
+        # Sanity gate: a board cut off at the frame (a corner clipped to the
+        # image edge) produces a homography that extrapolates the lattice far
+        # off-image. Reject when too many of the 90 intersections land well
+        # outside the frame, so the caller can fall back to landmark/palace
+        # fitting instead of trusting a garbage grid.
+        if image_shape is not None:
+            h, w = image_shape
+            xs, ys = grid_points[:, :, 0], grid_points[:, :, 1]
+            inside = (
+                (xs >= -0.25 * w) & (xs <= 1.25 * w)
+                & (ys >= -0.25 * h) & (ys <= 1.25 * h)
+            )
+            if inside.mean() < 0.85:
+                return None
         return Grid(points=grid_points, cell_width=cell_w, cell_height=cell_h)
 
     @staticmethod

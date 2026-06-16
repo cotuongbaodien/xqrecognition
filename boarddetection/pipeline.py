@@ -20,7 +20,7 @@ from .settings import (
 from .board_detector import BoardDetector, Grid
 from .board_segmenter import BoardSegmenter
 from .piece_detector import PieceDetector, DetectedPiece
-from .item_detector import ItemDetector, ItemDetectionResult
+from .item_detector import ItemDetector, ItemDetectionResult, Landmark
 from .fen_generator import FENGenerator, BoardState
 from .rules_validator import RulesValidator
 
@@ -84,8 +84,9 @@ class XiangqiRecognizer:
         self.item_detector.load_model(items_path)
         print(f"Loaded items model from {items_path}")
 
-        # Optional board-segmentation model for robust board localization
-        # (preferred over landmark-point fitting when available).
+        # Single 2-class (board+palace) segmentation model: the board mask gives
+        # the grid quad, the two palace masks give the rank axis -> orientation
+        # (90deg / cam-doc) cue. Trained at imgsz 640 to match inference.
         self.board_segmenter = None
         seg_path = MODELS_DIR / "board_seg.pt"
         if seg_path.exists():
@@ -166,14 +167,28 @@ class XiangqiRecognizer:
         # seg unavailable or fails.
         grid = None
         if self.board_segmenter is not None:
-            quad = self.board_segmenter.get_board_quad(image)
-            if quad is not None:
+            seg = self.board_segmenter.detect(image)
+            if seg is not None:
                 quad = self._snap_quad_to_corners(
-                    quad, item_result.board_corners
+                    seg.quad, item_result.board_corners
                 )
+                # The 2 palace centroids from the SAME (2-class) seg model give
+                # the rank axis -> the reliable orientation (90deg / cam-doc)
+                # cue. They set ONLY the orientation inside build_grid_from_quad;
+                # grid geometry comes purely from the board quad. Fall back to
+                # items-model palace landmarks if seg gives < 2 palaces.
+                if len(seg.palace_centers) >= 2:
+                    palace_centers = [
+                        Landmark(class_id=-1, class_name="palace-center",
+                                 confidence=1.0, bbox=(c[0], c[1], c[0], c[1]),
+                                 center=c)
+                        for c in seg.palace_centers
+                    ]
+                else:
+                    palace_centers = item_result.palace_centers
                 grid = ItemDetector.build_grid_from_quad(
                     quad, pieces,
-                    palace_centers=item_result.palace_centers,
+                    palace_centers=palace_centers,
                     palace_corners=item_result.palace_corners,
                     palace_bottoms=item_result.palace_bottoms,
                     image_shape=(h, w),
