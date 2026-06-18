@@ -1,0 +1,20 @@
+# Models are bind-mounted at runtime, never baked into the image (assets).
+models/
+
+# Weekly auto-label dataset — bind-mounted at runtime, grows unbounded.
+dataset/
+
+# Local dev cruft / native-deploy artifacts.
+.venv/
+**/__pycache__/
+*.pyc
+logs/
+
+# Docs + CPU requirements aren't needed inside the GPU image.
+docs/
+*.md
+requirements.txt
+
+# Build inputs themselves.
+Dockerfile
+.dockerignore

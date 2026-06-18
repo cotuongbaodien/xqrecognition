@@ -1,0 +1,17 @@
+# GPU (CUDA) requirements cho boarddetection OCR service.
+# Dùng cho máy có NVIDIA GPU. Khác requirements.txt ở chỗ torch bản CUDA.
+#
+# LƯU Ý: cu121 hợp với hầu hết driver NVIDIA mới (CUDA 12.x). Nếu driver cũ
+# (CUDA 11.x) đổi thành https://download.pytorch.org/whl/cu118 và torch 2.5.1+cu118.
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+torch==2.5.1
+torchvision==0.20.1
+ultralytics==8.3.55
+
+opencv-python-headless==4.10.0.84
+numpy==2.1.3
