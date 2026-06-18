@@ -72,17 +72,23 @@ def draw_grid(img, grid):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--images-dir", default=str(TEST_DIR))
+    ap.add_argument("--gt", default=str(GT_PATH))
     ap.add_argument("--out", default=str(TEST_DIR / "visual_v5"))
+    ap.add_argument("--items", default=None, help="optional items model to swap in")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    gt = parse_gt(GT_PATH)
+    gt = parse_gt(args.gt)
+    img_dir = Path(args.images_dir)
     images = sorted(
-        [f for f in TEST_DIR.iterdir() if f.suffix.lower() in (".jpg", ".png", ".jpeg")],
+        [f for f in img_dir.iterdir() if f.suffix.lower() in (".jpg", ".png", ".jpeg")],
         key=lambda p: int(p.stem) if p.stem.isdigit() else 1e9,
     )
     rec = XiangqiRecognizer()
+    if args.items:
+        rec.item_detector.load_model(args.items)
     n_ok = 0
     wrong = []
     for ip in images:
