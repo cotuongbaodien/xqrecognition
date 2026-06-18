@@ -11,7 +11,11 @@ Run:
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import io
+import json
 import logging
 import os
 import sys
@@ -54,6 +58,65 @@ OCR_SHARED_SECRET = os.environ.get("OCR_SHARED_SECRET", "")
 DATASET_DIR = os.environ.get("OCR_DATASET_DIR", "")
 DATASET_MODE = os.environ.get("OCR_DATASET_MODE", "all").lower()
 
+
+def _b64d(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+# Expected scope claim trong token (Flow B). Portal ký scope="detect" cho endpoint
+# này; token cấp cho mục đích khác (nếu sau này có) sẽ không dùng lại được ở đây.
+OCR_TOKEN_SCOPE = "detect"
+
+# Chống replay: nhớ các jti đã dùng cho tới khi token hết hạn (single-use).
+# Đây là cache IN-PROCESS — đủ vì stack chỉ chạy 1 worker uvicorn (xem
+# docker-compose: không có --workers). Nếu scale ra nhiều worker/replica thì
+# PHẢI chuyển sang Redis EX=<ttl> để dedup dùng chung. jti -> exp (unix seconds).
+_seen_jti: dict[str, float] = {}
+
+
+def _verify_token(token: str) -> bool:
+    """Verify a short-lived HMAC token issued by the portal (Flow B).
+
+    Token = base64url(payload_json) + "." + base64url(HMAC_SHA256(secret, payload_b64)).
+    payload = {"exp": <unix_seconds>, "jti": <uuid>, "scope": "detect", ...}. Signed
+    with OCR_SHARED_SECRET (shared portal<->ocr; the master secret never leaves the
+    servers). Lets the mobile app upload straight to ocr.abcxq.app with a token that
+    expires, instead of relaying the image through the portal VPS.
+
+    Checks, in order: chữ ký HMAC → scope → hết hạn → single-use (chống replay).
+    Flow A (header X-OCR-Secret tĩnh) KHÔNG đi qua đây nên không bị ảnh hưởng.
+    """
+    if not token or not OCR_SHARED_SECRET or "." not in token:
+        return False
+    try:
+        payload_b64, sig_b64 = token.rsplit(".", 1)
+        expected = hmac.new(
+            OCR_SHARED_SECRET.encode(), payload_b64.encode(), hashlib.sha256
+        ).digest()
+        if not hmac.compare_digest(expected, _b64d(sig_b64)):  # 1) chữ ký
+            return False
+        payload = json.loads(_b64d(payload_b64))
+        if payload.get("scope") != OCR_TOKEN_SCOPE:            # 2) scope
+            return False
+        exp = float(payload.get("exp", 0))
+        if exp < time.time():                                  # 3) hết hạn (TTL ~120s)
+            return False
+        jti = payload.get("jti")
+        if not jti:                                            # 4) bắt buộc có jti để single-use
+            return False
+        now = time.time()
+        # Dọn các jti đã hết hạn để cache không phình (window chỉ ~120s).
+        if _seen_jti:
+            for stale in [k for k, v in _seen_jti.items() if v < now]:
+                del _seen_jti[stale]
+        if jti in _seen_jti:                                   # 5) đã dùng → replay
+            return False
+        _seen_jti[jti] = exp
+        return True
+    except Exception:
+        return False
+
+
 app = FastAPI(title="boarddetection", version="1.0.0")
 _recognizer: Optional[XiangqiRecognizer] = None
 
@@ -80,9 +143,19 @@ async def detect(
     background_tasks: BackgroundTasks,
     image: UploadFile = File(...),
     x_ocr_secret: str = Header(default=""),
+    x_ocr_token: str = Header(default=""),
 ) -> JSONResponse:
-    if OCR_SHARED_SECRET and x_ocr_secret != OCR_SHARED_SECRET:
-        raise HTTPException(status_code=401, detail="unauthorized")
+    # Auth: long-lived shared secret (portal relay = Flow A) OR a short-lived
+    # signed token (mobile uploads straight here = Flow B). Either one passes.
+    # auth_via được log ở dòng detect bên dưới để biết request đi đường nào.
+    auth_via = "none"
+    if OCR_SHARED_SECRET:
+        if hmac.compare_digest(x_ocr_secret, OCR_SHARED_SECRET):
+            auth_via = "secret"        # Flow A (relay qua portal)
+        elif _verify_token(x_ocr_token):
+            auth_via = "token"         # Flow B (app upload thẳng)
+        else:
+            raise HTTPException(status_code=401, detail="unauthorized")
     if _recognizer is None:
         raise HTTPException(status_code=503, detail="model_not_ready")
 
@@ -128,8 +201,8 @@ async def detect(
             detected = False
 
     logger.info(
-        "detect detected=%s conf=%.3f pieces=%d ms=%d errors=%s",
-        detected, result.confidence, len(result.pieces), elapsed_ms, errors,
+        "detect auth=%s detected=%s conf=%.3f pieces=%d ms=%d errors=%s",
+        auth_via, detected, result.confidence, len(result.pieces), elapsed_ms, errors,
     )
 
     if DATASET_DIR and (DATASET_MODE != "failed" or not detected):
