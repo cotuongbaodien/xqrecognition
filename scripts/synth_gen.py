@@ -100,7 +100,34 @@ def load_crops(png_roots, real_root):
             if im is not None and im.ndim == 3 and im.shape[2] == 4:
                 pool[cid].append(im)
     return pool
-# NOTE real crops also loaded via the same loop below (folder names are ASCII)
+
+
+def load_pools(crops_root):
+    """Consolidated lib → {cid: {'real':[], 'dh':[], 'dl':[]}} bucketed by the
+    category prefix of each crop filename (real_ / dh### / dl###)."""
+    pools = {cid: {"real": [], "dh": [], "dl": []} for cid in FEN2ID.values()}
+    for cid in pools:
+        name = ITEM_CLASSES[cid][0]
+        for f in glob.glob(f"{crops_root}/{name}/*.png"):
+            b = os.path.basename(f)
+            cat = ("real" if b.startswith("real") else
+                   "dh" if b.startswith("dh") else
+                   "dl" if b.startswith("dl") else None)
+            if cat is None:
+                continue
+            im = imread_u(f, cv2.IMREAD_UNCHANGED)
+            if im is not None and im.ndim == 3 and im.shape[2] == 4:
+                pools[cid][cat].append(im)
+    return pools
+
+
+def load_board_types(manifest_path):
+    """{board_number_str: 'real'|'digital'} from manifest.csv."""
+    t = {}
+    if os.path.exists(manifest_path):
+        for r in csv.DictReader(open(manifest_path, encoding="utf-8")):
+            t[r["num"]] = r["type"]
+    return t
 
 
 def load_fens(paths):
@@ -169,11 +196,21 @@ def project(H, col, row):
     return p[0] / p[2], p[1] / p[2]
 
 
-def cell_quad(H, col, row, half=0.45):
+def cell_quad(H, col, row, half=0.45, piece_height=0.0):
+    """Footprint quad (tl,tr,bl,br) for cell. piece_height>0 lifts the TOP edge
+    up in image-space by that fraction of the cell's vertical extent — mimics the
+    3D height of a real piece (disc body above the intersection) so the warped
+    piece + its bbox are TALLER, matching real labels (h/w~1.14, not flat 0.93)."""
     g = np.float32([[col - half, row - half, 1], [col + half, row - half, 1],
                     [col - half, row + half, 1], [col + half, row + half, 1]]).T
     p = H @ g
-    return (p[:2] / p[2]).T.astype(np.float32)   # tl,tr,bl,br
+    q = (p[:2] / p[2]).T.astype(np.float32)   # tl,tr,bl,br
+    if piece_height > 0:
+        celly = 0.5 * (np.linalg.norm(q[2] - q[0]) + np.linalg.norm(q[3] - q[1]))
+        dy = piece_height * celly
+        q[0, 1] -= dy   # lift tl up
+        q[1, 1] -= dy   # lift tr up
+    return q
 
 
 def quad_aabb_label(quad, W, H_img, cid):
@@ -204,13 +241,9 @@ def apply_realism(rgba, rng, base_region):
         cur = float(np.mean(bgr)) + 1e-3
         f = np.clip(0.5 + 0.5 * (tgt / cur), 0.8, 1.2)  # gentle pull
         bgr = np.clip(bgr * f, 0, 255)
-    # feather alpha a touch more
-    a = rgba[:, :, 3]
-    a = cv2.GaussianBlur(a, (3, 3), 0)
     out = rgba.copy()
     out[:, :, :3] = bgr.astype(np.uint8)
-    out[:, :, 3] = a
-    return out
+    return out   # blend (feather vs hard) decided per-piece in composite_piece
 
 
 def composite_piece(base, rgba, quad, rng):
@@ -227,7 +260,15 @@ def composite_piece(base, rgba, quad, rng):
                                  borderMode=cv2.BORDER_CONSTANT,
                                  borderValue=(0, 0, 0, 0))
     wb = warped[:, :, :3].astype(np.float32)
-    wa = (warped[:, :, 3:4].astype(np.float32) / 255.0)
+    a = warped[:, :, 3].astype(np.float32)
+    # random blend mode per piece so the model can't key on one paste artifact
+    mode = rng.random()
+    if mode < 0.4:          # hard edge
+        a = np.where(a >= 128, 255.0, 0.0)
+    elif mode < 0.8:        # feather, random sigma
+        a = cv2.GaussianBlur(a, (0, 0), rng.uniform(0.5, 2.5))
+    # else: leave raw warped alpha (mild anti-alias)
+    wa = (a[:, :, None] / 255.0)
     # drop shadow: offset, blurred, dark — composite UNDER the piece
     sh = warped[:, :, 3].astype(np.float32)
     Mt = np.float32([[1, 0, 5], [0, 1, 6]])
@@ -271,29 +312,26 @@ def main():
     rng = random.Random(args.seed)
     nprng = np.random.RandomState(args.seed)
 
+    btypes = load_board_types(str(PROJECT_ROOT / args.boards / "manifest.csv"))
     corners = json.load(open(PROJECT_ROOT / args.corners, encoding="utf-8"))
-    boards = []
+    real_boards, digi_boards = [], []
     for rel, info in corners.items():
         p = PROJECT_ROOT / args.boards / rel
-        if p.exists():
-            boards.append((str(p), info["quad"]))
-    if not boards:
+        if not p.exists():
+            continue
+        num = os.path.splitext(os.path.basename(rel))[0].lstrip("0") or "0"
+        bt = btypes.get(num, "real")
+        (real_boards if bt == "real" else digi_boards).append((str(p), info["quad"]))
+    if not real_boards and not digi_boards:
         sys.exit("No boards with corners found.")
 
-    if args.crops_root:
-        # consolidated library: one ASCII pool per class (digital+real merged)
-        pool_digi = load_crops([], str(PROJECT_ROOT / args.crops_root))
-        pool_real = {cid: [] for cid in pool_digi}
-    else:
-        png_roots = args.png_root or ["download/BO_COTUONG_CLEAN/PNG_hires",
-                                      "data/piece_svg_png"]
-        png_roots = [str(PROJECT_ROOT / p) for p in png_roots]
-        pool_digi = load_crops(png_roots, "/__none__")
-        pool_real = load_crops([], str(PROJECT_ROOT / args.real_root))
+    pools = load_pools(str(PROJECT_ROOT / args.crops_root))
     fens = load_fens([PROJECT_ROOT / f if not os.path.isabs(f) else f
                       for f in args.fens])
-    print(f"boards={len(boards)} fens={len(fens)} "
-          f"digi/class~{len(pool_digi[0])} real/class~{len(pool_real[0])}")
+    p0 = pools[0]
+    print(f"boards: real={len(real_boards)} digital={len(digi_boards)} | "
+          f"fens={len(fens)} | crops/class real={len(p0['real'])} "
+          f"dh={len(p0['dh'])} dl={len(p0['dl'])}")
     if not fens:
         sys.exit("No FENs loaded.")
 
@@ -307,15 +345,30 @@ def main():
     img_dir.mkdir(parents=True)
     lbl_dir.mkdir(parents=True)
 
-    def pick_crop(cid):
-        use_digi = pool_digi[cid] and (not pool_real[cid] or
-                                       rng.random() < args.digital_frac)
-        src = pool_digi[cid] if use_digi else pool_real[cid]
-        return rng.choice(src) if src else None
+    # crop-source weights per board type (real boards favor real 3D crops;
+    # digital boards favor clean digital; lowres only on digital, capped)
+    WEIGHTS = {"real":    {"real": 0.8, "dh": 0.2, "dl": 0.0},
+               "digital": {"real": 0.0, "dh": 0.9, "dl": 0.1}}
+
+    def pick_crop(cid, btype):
+        w = WEIGHTS[btype]
+        cats = [c for c in ("real", "dh", "dl") if pools[cid][c] and w[c] > 0]
+        if not cats:  # fallback: any non-empty category
+            cats = [c for c in ("real", "dh", "dl") if pools[cid][c]]
+            if not cats:
+                return None
+            cat = rng.choice(cats)
+        else:
+            cat = rng.choices(cats, weights=[w[c] for c in cats])[0]
+        return rng.choice(pools[cid][cat])
 
     made = 0
     for k in range(args.n):
-        board_path, quad = boards[k % len(boards)] if False else rng.choice(boards)
+        # 70% real board, 30% digital (fallback if a list is empty)
+        use_real = rng.random() < 0.70
+        pool_b = real_boards if (use_real and real_boards) or not digi_boards else digi_boards
+        btype = "real" if pool_b is real_boards else "digital"
+        board_path, quad = rng.choice(pool_b)
         board = imread_u(board_path)
         if board is None:
             continue
@@ -331,10 +384,10 @@ def main():
             cid = FEN2ID.get(fen[r][c])
             if cid is None:
                 continue
-            crop = pick_crop(cid)
+            crop = pick_crop(cid, btype)
             if crop is None:
                 continue
-            q = cell_quad(H, c, r)
+            q = cell_quad(H, c, r, piece_height=0.20)
             composite_piece(img, crop, q, rng)
             lines.append(quad_aabb_label(q, Wimg, Himg, cid))
         # landmark labels (board features are already on the empty board)

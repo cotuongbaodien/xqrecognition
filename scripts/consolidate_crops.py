@@ -32,10 +32,33 @@ for c, (name, fen) in ITEM_CLASSES.items():
     if fen:
         DIGI2NAME[("b" if fen.islower() else "r", fen.lower())] = name
 
-DIGITAL_ROOTS = ["download/BO_COTUONG_CLEAN/PNG_hires", "data/piece_svg_png",
-                 "download/BO_COTUONG_CLEAN/_lowres_54px"]
+# (root, category) — category prefix encodes how synth_gen should use the crop:
+#   dh = digital hi-res (PNG_hires + SVG), dl = digital low-res (54px), real = harvested
+DIGITAL_ROOTS = [
+    ("download/BO_COTUONG_CLEAN/PNG_hires", "dh"),
+    ("data/piece_svg_png", "dh"),
+    ("download/BO_COTUONG_CLEAN/_lowres_54px", "dl"),
+]
 REAL_ROOT = "data/piece_crops_real"
 OUT = "data/piece_crops_all"
+
+
+def ensure_alpha(im):
+    """Return RGBA. If 3-channel (opaque), synthesize a feathered elliptical
+    alpha (pieces are round discs → ellipse removes the solid-bg corners)."""
+    if im is None:
+        return None
+    if im.ndim == 3 and im.shape[2] == 4:
+        return im
+    if im.ndim == 3 and im.shape[2] == 3:
+        h, w = im.shape[:2]
+        a = np.zeros((h, w), np.uint8)
+        cv2.ellipse(a, (w // 2, h // 2), (int(w * 0.49), int(h * 0.49)),
+                    0, 0, 360, 255, -1)
+        k = max(1, int(round(min(h, w) * 0.10)) | 1)
+        a = cv2.GaussianBlur(a, (k, k), 0)
+        return np.dstack([im, a])
+    return None
 
 
 def imread_u(path, flags=cv2.IMREAD_UNCHANGED):
@@ -63,14 +86,14 @@ def main():
     skin_map = {}   # skin_idx -> original skin folder name (for reference)
     counts = {n: 0 for n in set(FEN2NAME.values())}
 
-    # digital skins (ASCII-index the skin to keep output filenames ASCII)
+    # digital skins (ASCII-index per category to keep output filenames ASCII)
     skin_idx = 0
-    for root in DIGITAL_ROOTS:
+    for root, cat in DIGITAL_ROOTS:
         for skin_dir in sorted(glob.glob(f"{PROJECT_ROOT / root}/*")):
             if not os.path.isdir(skin_dir):
                 continue
             skin = os.path.basename(skin_dir)
-            tag = f"d{skin_idx:03d}"
+            tag = f"{cat}{skin_idx:03d}"   # e.g. dh012 / dl034
             skin_map[tag] = skin
             got = False
             for f in glob.glob(f"{skin_dir}/*.png"):
@@ -80,8 +103,8 @@ def main():
                 name = DIGI2NAME.get((base[0], base[1]))
                 if name is None:
                     continue
-                im = imread_u(f)
-                if im is None or im.ndim != 3 or im.shape[2] != 4:
+                im = ensure_alpha(imread_u(f))   # synth alpha if 3-channel
+                if im is None:
                     continue
                 imwrite_u(str(out / name / f"{tag}_{base}.png"), im)
                 counts[name] += 1
