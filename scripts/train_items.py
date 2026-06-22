@@ -26,6 +26,7 @@ def train_items(
     seed: int = 42,
     name: str = "items",
     deploy: bool = True,
+    workers: int = 8,
 ):
     data_path = Path(data_yaml)
 
@@ -45,6 +46,7 @@ def train_items(
         batch=batch_size,
         imgsz=img_size,
         device=device,
+        workers=workers,       # lower on Windows to avoid shared-mem worker crash
         patience=30,
         save=True,
         project=str(PROJECT_ROOT / "runs" / "items"),
@@ -101,6 +103,8 @@ if __name__ == "__main__":
     parser.add_argument("--name", default="items")
     parser.add_argument("--no-deploy", action="store_true",
                         help="Don't copy best.pt to models/items.pt (caller gates deploy)")
+    parser.add_argument("--workers", type=int, default=8,
+                        help="dataloader workers (lower on Windows if worker crashes)")
     args = parser.parse_args()
 
     train_items(
@@ -113,4 +117,5 @@ if __name__ == "__main__":
         seed=args.seed,
         name=args.name,
         deploy=not args.no_deploy,
+        workers=args.workers,
     )
