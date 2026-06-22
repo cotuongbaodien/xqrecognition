@@ -80,3 +80,21 @@ Cut-paste synthetic là kỹ thuật chuẩn; có 141 bộ quân + 60 bàn + 840
 - prod = v16+notok (118). v17 (109) KHÔNG deploy.
 - Assets sẵn: 134/141 skin consolidated, 8400 real crop, 60 bàn QC, 4000 FEN.
 - CHỜ APPROVE để chạy bước 2-6.
+
+---
+## ✅ READY (chuẩn bị xong — tối chạy train)
+- `data/items_v19`: train 6557 / valid 1229 / test 411 (4197 real v16 + 4000 synth v3), 18-class
+- synth v3 fixes đã áp: scale h/w 1.08 (real 1.14), multi-blend, crop-board matching, 136 skin, 4000 FEN
+- GPU free. prod = v16+notok (118), v19 train --no-deploy (gate bench trước khi deploy)
+
+### Lệnh TRAIN (chạy tối nay):
+```
+python scripts/train_items.py --data data/items_v19/data.yaml --name items_v19 \
+  --img-size 960 --batch-size 12 --workers 2 --no-deploy
+```
+~5h (hoặc early-stop). Sau train → eval:
+```
+# thêm "v19": "models/backups/items_v19.pt" vào MODELS trong scripts/eval_bench.py rồi:
+python scripts/eval_bench.py
+```
+Gate: exact ≥118 (v16) và MISS không tăng → cân nhắc deploy/scale. Nếu vẫn ≤118 → xem hướng EXTRA=240 (grid).
