@@ -927,23 +927,40 @@ class ItemDetector:
         palace_corners: Optional[List["Landmark"]] = None,
         palace_bottoms: Optional[List["Landmark"]] = None,
         image_shape: Optional[Tuple[int, int]] = None,
+        palace_quads: Optional[List[Tuple[Tuple[float, float], ...]]] = None,
     ) -> Optional[Grid]:
         """Build a 9x10 grid from the 4 board corners (segmentation quad).
 
-        palace_centers / palace_corners / palace_bottoms are used ONLY to
-        determine ORIENTATION (the rows axis -> the 90deg / cam-doc fix) via
-        _corners_to_correspondences. They do NOT alter the grid geometry, which
-        comes purely from the board quad: letting palace anchors re-fit the
-        homography regressed the grid on perspective / frame-filling boards
-        (the palace mask is noisier than the board quad), so the board quad
-        alone is the geometry source and the palace is the orientation source.
+        palace_centers / palace_corners / palace_bottoms set ORIENTATION (the
+        rows axis -> the 90deg / cam-doc fix) via _corners_to_correspondences.
+
+        GRID GEOMETRY: by default the board quad alone (an exact 4-corner
+        perspective). When the OUTER corners are unreliable (occlusion / wooden
+        frame / strong tilt) that grid skews and every piece maps to the wrong
+        cell. So when seg palace squares are available (`palace_quads`) we ALSO
+        build a candidate that folds those 8 interior anchors in with RANSAC,
+        then keep whichever grid the detected PIECES actually fit better
+        (_grid_score). This avoids the old regression (blindly trusting the
+        noisier palace mask) — the proven 4-corner grid wins unless the
+        palace-anchored one demonstrably snaps pieces better.
         """
         tl, tr, bl, br = quad
         corrs = ItemDetector._corners_to_correspondences(
             tl, tr, bl, br, pieces, palace_centers,
             palace_corners, palace_bottoms,
         )
-        return ItemDetector._grid_from_4_corners(corrs, image_shape)
+        baseline = ItemDetector._grid_from_4_corners(corrs, image_shape)
+        if baseline is None or not palace_quads:
+            return baseline
+        anchored = ItemDetector._palace_anchored_grid(
+            corrs, palace_quads, baseline, image_shape)
+        if anchored is None:
+            return baseline
+        b_n, b_res = ItemDetector._grid_score(baseline, pieces)
+        a_n, a_res = ItemDetector._grid_score(anchored, pieces)
+        if a_n > b_n or (a_n == b_n and a_res < b_res - 0.02):
+            return anchored
+        return baseline
 
     @staticmethod
     def _assign_to_targets(points, targets, grid):
@@ -971,6 +988,51 @@ class ItemDetector:
             used_p.add(id(pt))
             out.append((tgt[0], tgt[1], float(pt[0]), float(pt[1])))
         return out
+
+    @staticmethod
+    def _grid_score(grid, pieces) -> Tuple[int, float]:
+        """How well the detected pieces fit a grid: (count snapping within 0.5
+        cell, mean residual ratio of those). Higher count then lower residual =
+        better. Used to choose between grid hypotheses without retraining."""
+        if grid is None or not pieces:
+            return (0, 1e9)
+        cell = min(grid.cell_width, grid.cell_height)
+        if cell <= 0:
+            return (0, 1e9)
+        n, res = 0, 0.0
+        for p in pieces:
+            r, c = grid.get_nearest_cell(p.center[0], p.center[1])
+            px, py = grid.points[r, c]
+            ratio = ((p.center[0] - px) ** 2 +
+                     (p.center[1] - py) ** 2) ** 0.5 / cell
+            if ratio < 0.5:
+                n += 1
+                res += ratio
+        return (n, res / n if n else 1e9)
+
+    @staticmethod
+    def _palace_anchored_grid(
+        corner_corrs, palace_quads, baseline_grid, image_shape,
+    ) -> Optional[Grid]:
+        """Re-fit the homography from the 4 board corners PLUS the seg palace-
+        square corners (matched to their known grid coords via the baseline
+        grid). RANSAC lets the up-to-8 accurate palace anchors outvote a
+        mis-placed outer board corner, fixing skewed grids on tilted / framed
+        boards. Returns None when too few palace corners match (e.g. a noisy
+        palace mask), so the caller safely falls back to the baseline grid."""
+        pts = []
+        for q in palace_quads:
+            for xy in q:
+                pts.append((float(xy[0]), float(xy[1])))
+        if len(pts) < 4:
+            return None
+        pal = ItemDetector._assign_to_targets(
+            pts, ItemDetector._PALACE_CORNER_TARGETS, baseline_grid)
+        if len(pal) < 4:
+            return None
+        combined = list(corner_corrs) + pal
+        return ItemDetector._grid_from_correspondences(
+            combined, image_shape, ransac=True)
 
     @staticmethod
     def _grid_from_correspondences(

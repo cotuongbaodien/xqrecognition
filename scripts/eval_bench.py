@@ -10,9 +10,9 @@ from boarddetection.pipeline import XiangqiRecognizer
 
 BENCH = ROOT / "test/bench"
 MODELS = {
-    "old items.pt":   "boarddetection/models/items.pt",
-    "v16 (+notok)":   "models/backups/items_v16_960.pt",
-    "v16c (clean)":   "models/backups/items_v16c_960.pt",
+    "v16 (+notok/prod)": "models/backups/items_v16_960.pt",
+    "v17 synth-v1":      "models/backups/items_v17_synth.pt",
+    "v19 synth-v3":      "models/backups/items_items_v19.pt",
 }
 
 

@@ -192,6 +192,7 @@ class XiangqiRecognizer:
                     palace_corners=item_result.palace_corners,
                     palace_bottoms=item_result.palace_bottoms,
                     image_shape=(h, w),
+                    palace_quads=seg.palace_quads,
                 )
                 if grid is None:
                     errors.append("Board-seg quad found but grid build failed")
