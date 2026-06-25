@@ -76,6 +76,9 @@ def main():
     ap.add_argument("--gt", default=str(GT_PATH))
     ap.add_argument("--out", default=str(TEST_DIR / "visual_v5"))
     ap.add_argument("--items", default=None, help="optional items model to swap in")
+    ap.add_argument("--conf", type=float, default=0.25,
+                    help="piece conf (low => borderline pieces shown so you can "
+                         "see what the 0.5 prod threshold would drop)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -91,34 +94,71 @@ def main():
         rec.item_detector.load_model(args.items)
     n_ok = 0
     wrong = []
+    plog = []   # per-piece conf + name log (text)
     for ip in images:
         img = cv2.imread(str(ip))
-        res = rec.recognize(str(ip))
+        res = rec.recognize(str(ip), piece_confidence=args.conf)
         det = res.fen.split()[0]
         ok = ip.stem in gt and matches(det, gt[ip.stem])
         n_ok += ok
         if ip.stem in gt and not ok:
             wrong.append(ip.stem)
 
+        tag0 = "OK" if ok else "WRONG"
+        plog.append(f"\n=== {tag0}_{ip.stem}  ({len(res.pieces)} quan, "
+                    f"conf>={args.conf}) ===")
+        for p in sorted(res.pieces, key=lambda x: x.confidence):
+            flag = "  <== conf thap" if p.confidence < 0.5 else ""
+            plog.append(f"  conf={p.confidence:.3f}  {p.class_name} "
+                        f"({p.fen_symbol}){flag}")
+
         vis = img.copy()
         if res.grid is not None:
             draw_grid(vis, res.grid)
-        # FEN overlay (top banner)
-        banner = vis.shape[0] // 18
-        cv2.rectangle(vis, (0, 0), (vis.shape[1], banner * 2 + 6), (0, 0, 0), -1)
-        cv2.putText(vis, f"det: {det}", (5, banner), cv2.FONT_HERSHEY_SIMPLEX,
-                    banner / 40, (0, 255, 0), 1, cv2.LINE_AA)
+        # Per-piece label: FEN symbol + confidence, colored by conf so you can
+        # spot pieces that the 0.5 prod threshold would drop (orange/red).
+        for p in res.pieces:
+            cx, cy = int(p.center[0]), int(p.center[1])
+            cf = p.confidence
+            col = (0, 255, 0) if cf >= 0.5 else (0, 165, 255) if cf >= 0.3 else (0, 0, 255)
+            sym = p.fen_symbol or "?"
+            cv2.putText(vis, sym, (cx - 7, cy + 4), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(vis, sym, (cx - 7, cy + 4), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, col, 1, cv2.LINE_AA)
+            cv2.putText(vis, f"{cf:.2f}", (cx - 13, cy + 19), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.36, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(vis, f"{cf:.2f}", (cx - 13, cy + 19), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.36, col, 1, cv2.LINE_AA)
+        # FEN info on a SEPARATE strip above the board (never covers it)
         gtxt = gt.get(ip.stem, "(no GT)")
-        cv2.putText(vis, f"gt : {gtxt}", (5, banner * 2), cv2.FONT_HERSHEY_SIMPLEX,
-                    banner / 40, (0, 200, 255), 1, cv2.LINE_AA)
+        lines = [(f"det: {det}", (0, 255, 0)),
+                 (f"gt : {gtxt}", (0, 200, 255))]
         if res.errors:
-            cv2.putText(vis, "ERR:" + ";".join(res.errors)[:60], (5, banner * 2 + 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, banner / 60, (0, 0, 255), 1, cv2.LINE_AA)
+            lines.append(("ERR: " + ";".join(res.errors), (0, 0, 255)))
+        W = vis.shape[1]
+
+        def fit_scale(txt):
+            for s in (0.7, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.22):
+                tw = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, s, 1)[0][0]
+                if tw <= W - 10:
+                    return s
+            return 0.22
+        scale = min(fit_scale(t) for t, _ in lines)
+        th = cv2.getTextSize("Ag/0", cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][1]
+        lh = th + 9
+        strip = np.zeros((lh * len(lines) + 8, W, 3), np.uint8)
+        for i, (txt, col) in enumerate(lines):
+            cv2.putText(strip, txt, (5, lh * (i + 1)), cv2.FONT_HERSHEY_SIMPLEX,
+                        scale, col, 1, cv2.LINE_AA)
+        vis = cv2.vconcat([strip, vis])
 
         tag = "OK" if ok else "WRONG"
         cv2.imwrite(str(out / f"{tag}_{ip.stem}.png"), vis)
 
+    (out / "_piece_conf_log.txt").write_text("\n".join(plog), encoding="utf-8")
     print(f"saved {len(images)} visuals to {out}")
+    print(f"piece conf+name log -> {out / '_piece_conf_log.txt'}")
     print(f"exact/mirror-OK: {n_ok}/{len(gt)}")
     print(f"WRONG ({len(wrong)}): {', '.join(wrong)}")
 

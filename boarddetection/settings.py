@@ -112,7 +112,8 @@ BOARD_SEG_TRAIN_CONFIG = {
 
 # Detection confidence thresholds
 BOARD_CONFIDENCE_THRESHOLD = 0.5
-PIECE_CONFIDENCE_THRESHOLD = 0.5
+PIECE_CONFIDENCE_THRESHOLD = 0.25  # was 0.5; sweep on 224-bench: 194->199 exact,
+# MISS 87->65, EXTRA did not rise (rescued real low-conf pieces, not noise).
 
 # Standard Xiangqi starting position FEN
 STARTING_FEN = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR"
