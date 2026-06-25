@@ -11,7 +11,7 @@ from boarddetection.pipeline import XiangqiRecognizer
 BENCH = ROOT / "test/bench"
 MODELS = {
     "v19 (prod/baseline)": "models/backups/items_items_v19.pt",
-    "v20 ep55 (cleaned)":  "models/backups/items_v20_snap.pt",
+    "v20 (cleaned+deploy)": "models/backups/items_v20_snap.pt",
 }
 
 

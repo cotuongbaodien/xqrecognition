@@ -115,33 +115,51 @@ def main():
         vis = img.copy()
         if res.grid is not None:
             draw_grid(vis, res.grid)
-        # ---- map detections to grid cells, compare vs GT (4 orientations) ----
-        det_cell = {}
+        # ---- flag wrong/missing against the pipeline's ACTUAL det FEN, so the
+        #      pink marks line up exactly with the det/gt strip (not a separate
+        #      heuristic). det FEN is authoritative; we only need to locate each
+        #      FEN cell back onto the image. ----
+        det_cell = {}              # grid (r,c) -> piece
         if res.grid is not None:
             for p in res.pieces:
                 r, c = res.grid.get_nearest_cell(p.center[0], p.center[1])
                 if 0 <= r < GRID_ROWS and 0 <= c < GRID_COLS:
                     det_cell[(r, c)] = p
+        det_rows = expand_rows(det)
         gt_rows = expand_rows(gt[ip.stem]) if ip.stem in gt else None
-        wrong_cells, miss_cells, gtt = set(), {}, None
-        if gt_rows and res.grid is not None:
-            best = -1
-            for hm in (False, True):
-                for vf in (False, True):
-                    g = [row[::-1] for row in gt_rows] if hm else [list(r) for r in gt_rows]
-                    if vf:
-                        g = g[::-1]
-                    sc = sum(1 for (r, c), p in det_cell.items()
-                             if g[r][c] == (p.fen_symbol or "?"))
-                    if sc > best:
-                        best, gtt = sc, g
+        gtf = None
+        if gt_rows:   # mirror-tolerant GT, matched vs the det FEN (like the eval)
+            cands = [gt_rows, [row[::-1] for row in gt_rows]]
+            gtf = min(cands, key=lambda g: sum(
+                det_rows[i][j] != g[i][j]
+                for i in range(GRID_ROWS) for j in range(GRID_COLS)))
+
+        def tf(rc, hm, vf):   # grid (r,c) -> FEN (r,c) under a flip
+            r, c = rc
+            return ((GRID_ROWS - 1 - r) if vf else r,
+                    (GRID_COLS - 1 - c) if hm else c)
+        # pick the flip that best maps my grid detections onto the det FEN
+        T, bsc = (False, False), -1
+        for hm in (False, True):
+            for vf in (False, True):
+                sc = sum(1 for (r, c), p in det_cell.items()
+                         if det_rows[tf((r, c), hm, vf)[0]][tf((r, c), hm, vf)[1]]
+                         == (p.fen_symbol or "?"))
+                if sc > bsc:
+                    bsc, T = sc, (hm, vf)
+        wrong_cells, miss_cells = set(), {}
+        if gtf is not None:
             for (r, c), p in det_cell.items():
-                if gtt[r][c] != (p.fen_symbol or "?"):
-                    wrong_cells.add((r, c))          # wrong class OR extra (GT empty)
-            for r in range(GRID_ROWS):
-                for c in range(GRID_COLS):
-                    if gtt[r][c] != "." and (r, c) not in det_cell:
-                        miss_cells[(r, c)] = gtt[r][c]    # GT has piece, model missed
+                fr, fc = tf((r, c), *T)
+                if gtf[fr][fc] != (p.fen_symbol or "?"):
+                    wrong_cells.add((r, c))          # wrong class OR extra
+            inv = {tf((r, c), *T): (r, c)
+                   for r in range(GRID_ROWS) for c in range(GRID_COLS)}
+            for fr in range(GRID_ROWS):
+                for fc in range(GRID_COLS):
+                    if gtf[fr][fc] != "." and det_rows[fr][fc] == "." \
+                            and (fr, fc) in inv:
+                        miss_cells[inv[(fr, fc)]] = gtf[fr][fc]  # GT has, model missed
 
         # label sits ABOVE the token so the piece stays visible
         pts = res.grid.points if res.grid is not None else None
@@ -187,9 +205,16 @@ def main():
             cv2.putText(strip, txt, (5, lh * (i + 1)), cv2.FONT_HERSHEY_SIMPLEX,
                         scale, col, 1, cv2.LINE_AA)
         vis = cv2.vconcat([strip, vis])
+        # clean ORIGINAL beside the annotated view, so GT/FEN can be re-checked
+        opad = np.zeros((strip.shape[0], img.shape[1], 3), np.uint8)
+        cv2.putText(opad, "GOC (original)", (5, strip.shape[0] - 7),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+        orig = cv2.vconcat([opad, img])
+        sep = np.full((vis.shape[0], 4, 3), 90, np.uint8)
+        combo = cv2.hconcat([orig, sep, vis])
 
         tag = "OK" if ok else "WRONG"
-        cv2.imwrite(str(out / f"{tag}_{ip.stem}.png"), vis)
+        cv2.imwrite(str(out / f"{tag}_{ip.stem}.png"), combo)
 
     (out / "_piece_conf_log.txt").write_text("\n".join(plog), encoding="utf-8")
     print(f"saved {len(images)} visuals to {out}")
