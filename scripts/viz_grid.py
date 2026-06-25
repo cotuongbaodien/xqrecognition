@@ -115,21 +115,56 @@ def main():
         vis = img.copy()
         if res.grid is not None:
             draw_grid(vis, res.grid)
-        # Per-piece label: FEN symbol + confidence, colored by conf so you can
-        # spot pieces that the 0.5 prod threshold would drop (orange/red).
-        for p in res.pieces:
+        # ---- map detections to grid cells, compare vs GT (4 orientations) ----
+        det_cell = {}
+        if res.grid is not None:
+            for p in res.pieces:
+                r, c = res.grid.get_nearest_cell(p.center[0], p.center[1])
+                if 0 <= r < GRID_ROWS and 0 <= c < GRID_COLS:
+                    det_cell[(r, c)] = p
+        gt_rows = expand_rows(gt[ip.stem]) if ip.stem in gt else None
+        wrong_cells, miss_cells, gtt = set(), {}, None
+        if gt_rows and res.grid is not None:
+            best = -1
+            for hm in (False, True):
+                for vf in (False, True):
+                    g = [row[::-1] for row in gt_rows] if hm else [list(r) for r in gt_rows]
+                    if vf:
+                        g = g[::-1]
+                    sc = sum(1 for (r, c), p in det_cell.items()
+                             if g[r][c] == (p.fen_symbol or "?"))
+                    if sc > best:
+                        best, gtt = sc, g
+            for (r, c), p in det_cell.items():
+                if gtt[r][c] != (p.fen_symbol or "?"):
+                    wrong_cells.add((r, c))          # wrong class OR extra (GT empty)
+            for r in range(GRID_ROWS):
+                for c in range(GRID_COLS):
+                    if gtt[r][c] != "." and (r, c) not in det_cell:
+                        miss_cells[(r, c)] = gtt[r][c]    # GT has piece, model missed
+
+        # label sits ABOVE the token so the piece stays visible
+        pts = res.grid.points if res.grid is not None else None
+        pitch = int(abs(pts[1, 0][1] - pts[0, 0][1])) if pts is not None else 26
+        off = max(13, int(pitch * 0.45))
+        PINK = (180, 105, 255)
+
+        def label(x, y, txt, col, fs=0.45):
+            cv2.putText(vis, txt, (x, y), cv2.FONT_HERSHEY_SIMPLEX, fs,
+                        (255, 255, 255), 3, cv2.LINE_AA)
+            cv2.putText(vis, txt, (x, y), cv2.FONT_HERSHEY_SIMPLEX, fs, col, 1, cv2.LINE_AA)
+
+        for (r, c), p in det_cell.items():
             cx, cy = int(p.center[0]), int(p.center[1])
-            cf = p.confidence
-            col = (0, 255, 0) if cf >= 0.5 else (0, 165, 255) if cf >= 0.3 else (0, 0, 255)
             sym = p.fen_symbol or "?"
-            cv2.putText(vis, sym, (cx - 7, cy + 4), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(vis, sym, (cx - 7, cy + 4), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, col, 1, cv2.LINE_AA)
-            cv2.putText(vis, f"{cf:.2f}", (cx - 13, cy + 19), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.36, (0, 0, 0), 2, cv2.LINE_AA)
-            cv2.putText(vis, f"{cf:.2f}", (cx - 13, cy + 19), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.36, col, 1, cv2.LINE_AA)
+            col = PINK if (r, c) in wrong_cells else (
+                (0, 0, 220) if sym.isupper() else (10, 10, 10))  # red / black
+            label(cx - 16, cy - off, f"{sym} {p.confidence:.2f}", col)
+        # missing pieces: pink ring + expected GT symbol at the empty cell
+        for (r, c), sym in miss_cells.items():
+            x, y = int(pts[r, c][0]), int(pts[r, c][1])
+            cv2.circle(vis, (x, y), max(9, off), PINK, 2, cv2.LINE_AA)
+            label(x - 7, y + 5, sym, PINK, 0.6)
         # FEN info on a SEPARATE strip above the board (never covers it)
         gtxt = gt.get(ip.stem, "(no GT)")
         lines = [(f"det: {det}", (0, 255, 0)),
