@@ -149,6 +149,7 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
 class OnnxYOLO:
     def __init__(self, path: str, task: Optional[str] = None):
         so = ort.SessionOptions()
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         n = os.environ.get("OCR_ONNX_THREADS")
         if n:
             so.intra_op_num_threads = int(n)
@@ -197,12 +198,14 @@ class OnnxYOLO:
         coeff = coeff[keep] if coeff is not None else None
         return _xywh2xyxy(boxes), score, cls, coeff
 
-    def _class_aware_nms(self, xyxy, score, iou):
-        """NMS theo lớp (agnostic=False khớp ultralytics): offset box theo class id."""
+    def _class_aware_nms(self, xyxy, cls, score, iou):
+        """NMS theo lớp (agnostic=False khớp ultralytics): offset box theo class id.
+        cls truyền tham số (không stash lên self) -> reentrant/thread-safe."""
         if xyxy.shape[0] == 0:
             return []
         max_wh = 7680.0
-        return _nms(xyxy + (self._cls_off * max_wh)[:, None], score, iou)[:_MAX_DET]
+        offset = cls.astype(np.float32) * max_wh
+        return _nms(xyxy + offset[:, None], score, iou)[:_MAX_DET]
 
     def _unletterbox(self, xyxy, r, pad_x, pad_y, w0, h0):
         xyxy = xyxy.copy()
@@ -215,8 +218,7 @@ class OnnxYOLO:
 
     def _post_detect(self, outputs, conf, iou, r, pad_x, pad_y, w0, h0):
         xyxy, score, cls, _ = self._decode_dets(outputs[0][0], conf)
-        self._cls_off = cls.astype(np.float32)
-        keep = self._class_aware_nms(xyxy, score, iou)
+        keep = self._class_aware_nms(xyxy, cls, score, iou)
         xyxy, score, cls = xyxy[keep], score[keep], cls[keep]
         xyxy = self._unletterbox(xyxy, r, pad_x, pad_y, w0, h0)
         return _Result(_Boxes(cls.astype(np.float32), score.astype(np.float32), xyxy))
@@ -229,8 +231,7 @@ class OnnxYOLO:
         if det.ndim != 3 or proto.ndim != 4:
             det, proto = proto, det
         xyxy, score, cls, coeff = self._decode_dets(det[0], conf)
-        self._cls_off = cls.astype(np.float32)
-        keep = self._class_aware_nms(xyxy, score, iou)
+        keep = self._class_aware_nms(xyxy, cls, score, iou)
         if len(keep) == 0:
             return _Result(_Boxes(np.zeros(0), np.zeros(0), np.zeros((0, 4))), _Masks([]))
         xyxy_lb = xyxy[keep]
