@@ -33,9 +33,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from boarddetection.settings import ITEM_CLASSES, ITEMS_MODEL  # noqa: E402
 
-DATASET = os.path.join(ROOT, "data", "items_v20")
-STAGE = os.path.join(DATASET, "incoming")
-REVIEW_DIR = os.path.join(ROOT, "data", "label_review_incoming")
+# Self-contained workspace for the whole weekly flow (gitignored).
+#   weekly/inbox/2026-WNN/images/  <- COPY server images here
+#   weekly/staging/{images,labels} <- pseudo-labeled, pre-review (auto)
+#   weekly/review/<N.tag>/sheet_*  <- label review galleries (auto)
+#   weekly/test_candidates/        <- test picks (pick_test_candidates.py)
+# On --merge, staging/ moves into the canonical trainset data/items_v20/train/.
+WEEKLY = os.path.join(ROOT, "weekly")
+INBOX = os.path.join(WEEKLY, "inbox")
+STAGE = os.path.join(WEEKLY, "staging")
+REVIEW_DIR = os.path.join(WEEKLY, "review")
+DATASET = os.path.join(ROOT, "data", "items_v20")   # canonical trainset (merge target)
 IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 # class id -> gallery tag (only the 14 pieces are reviewed; landmarks 7-10 are
@@ -56,14 +64,27 @@ def imread_u(path):
     return cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
 
 
+def _week_of(path, input_dir):
+    """Derive the week tag from an image path. Handles both a flat folder and a
+    parent dir of week-subfolders (e.g. ocrservice/2026-W24/images/x.jpg)."""
+    rel = os.path.relpath(path, input_dir).replace("\\", "/").split("/")
+    if len(rel) > 1:
+        return rel[0]                                   # week subfolder name
+    return os.path.basename(os.path.normpath(input_dir))
+
+
 def detect_and_stage(input_dir, conf):
     from ultralytics import YOLO
-    imgs = [p for p in glob.glob(os.path.join(input_dir, "*"))
-            if p.lower().endswith(IMG_EXT)]
+    # recursive: --input can be ONE week folder OR a parent of week-subfolders
+    # (each with images/). Skip anything under a labels/ dir.
+    imgs = [p for p in glob.glob(os.path.join(input_dir, "**", "*"), recursive=True)
+            if p.lower().endswith(IMG_EXT)
+            and (os.sep + "labels" + os.sep) not in p]
     if not imgs:
         print(f"No images in {input_dir}")
         return None
-    week = os.path.basename(os.path.normpath(input_dir))
+    weeks = sorted({_week_of(p, input_dir) for p in imgs})
+    print(f"Weeks: {', '.join(weeks)}")
     os.makedirs(os.path.join(STAGE, "images"), exist_ok=True)
     os.makedirs(os.path.join(STAGE, "labels"), exist_ok=True)
 
@@ -93,7 +114,7 @@ def detect_and_stage(input_dir, conf):
                 dist[cid] += 1
         # unique staged name: weekly_<week>_<origstem>
         stem = os.path.splitext(os.path.basename(ip))[0]
-        base = f"weekly_{week}_{stem}"
+        base = f"weekly_{_week_of(ip, input_dir)}_{stem}"
         ext = os.path.splitext(ip)[1].lower()
         shutil.copy(ip, os.path.join(STAGE, "images", base + ext))
         with open(os.path.join(STAGE, "labels", base + ".txt"), "w",
@@ -106,7 +127,7 @@ def detect_and_stage(input_dir, conf):
     print("Class distribution (pseudo-labels):")
     for cid, c in dist.most_common():
         print(f"  {c:5d}  {ITEM_CLASSES[cid][0]}")
-    return week
+    return n_imgs
 
 
 def build_galleries():
@@ -167,9 +188,10 @@ def build_galleries():
             os.path.join(REVIEW_DIR, f"manifest_{tag}.json"), "w"), indent=1)
         if items:
             print(f"  {tag:8s}: {len(items)} crop, {nsheets} sheet")
-    print(f"\n-> Review sheets: {REVIEW_DIR}/<tag>/sheet_NNN.jpg")
+    print(f"\n-> Review sheets: weekly/review/<N.tag>/sheet_NNN.jpg")
     print("   Fix:  python scripts/apply_review.py <tag> '<idx>=<class> ...' "
-          "--dir data/label_review_incoming")
+          "--dir weekly/review")
+    print("   Test: python scripts/pick_test_candidates.py --n 20")
     print("   Then: python scripts/weekly_ingest.py --merge")
 
 
@@ -217,17 +239,17 @@ def merge():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", help="week's image folder (e.g. data/incoming/2026-06-24)")
+    ap.add_argument("--input", default=INBOX,
+                    help="folder to ingest (default: weekly/inbox/, with "
+                         "2026-WNN/images subfolders). Recursive.")
     ap.add_argument("--conf", type=float, default=0.25)
     ap.add_argument("--merge", action="store_true",
-                    help="finalize: purge sentinels + move incoming/ into train/")
+                    help="finalize: purge sentinels + move staging into train/")
     args = ap.parse_args()
 
     if args.merge:
         merge()
         return
-    if not args.input:
-        ap.error("provide --input <folder>  (or --merge to finalize)")
     week = detect_and_stage(args.input, args.conf)
     if week:
         print("\nBuilding review galleries ...")
