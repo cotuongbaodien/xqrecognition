@@ -30,7 +30,8 @@ def parse_gt(path):
     for line in open(path, encoding="utf-8"):
         if ":" in line:
             k, v = line.split(":", 1)
-            gt[k.strip()] = v.strip().split()[0]
+            if v.strip():            # skip blank GT (e.g. boards awaiting FEN)
+                gt[k.strip()] = v.strip().split()[0]
     return gt
 
 

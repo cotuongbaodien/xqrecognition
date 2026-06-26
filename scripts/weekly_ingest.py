@@ -1,10 +1,10 @@
 """Weekly OCR-submission ingest -> pseudo-label -> staging -> review gallery.
 
-Active-learning loop for growing items_v19 from real user submissions:
+Active-learning loop for growing items_v20 from real user submissions:
 
-  1. v19 `items.pt` detects on a week's submitted images (conf>=0.25, imgsz=960,
+  1. v20 `items.pt` detects on a week's submitted images (conf>=0.25, imgsz=960,
      matching deploy inference). Pseudo-labels written in YOLO format.
-  2. Images + labels staged into  items_v19/incoming/{images,labels}/  (NOT
+  2. Images + labels staged into  items_v20/incoming/{images,labels}/  (NOT
      train/ yet) so wrong pseudo-labels never pollute the trainset before review.
   3. Per-class review galleries built into  data/label_review_incoming/  in the
      SAME format as review_gallery.py, so the exact same fix workflow applies:
@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from boarddetection.settings import ITEM_CLASSES, ITEMS_MODEL  # noqa: E402
 
-DATASET = os.path.join(ROOT, "data", "items_v19")
+DATASET = os.path.join(ROOT, "data", "items_v20")
 STAGE = os.path.join(DATASET, "incoming")
 REVIEW_DIR = os.path.join(ROOT, "data", "label_review_incoming")
 IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
@@ -211,7 +211,7 @@ def merge():
             pass
     print(f"Merged {n} images into train/ (purged {purged} sentinel boxes).")
     print("Now retrain: python scripts/train_items.py --data "
-          "data/items_v19/data.yaml --name items_vNEXT --img-size 960 "
+          "data/items_v20/data.yaml --name items_vNEXT --img-size 960 "
           "--batch-size 12 --workers 2 --no-deploy")
 
 

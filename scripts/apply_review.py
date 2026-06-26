@@ -38,7 +38,8 @@ PIECE = {
     ("phao", "den"): 1, ("phao", "do"): 12,
     ("si", "den"): 0, ("si", "do"): 11,
     ("tuong", "den"): 3, ("tuong", "do"): 14,   # elephant
-    ("soai", "den"): 4, ("soai", "do"): 15,     # general
+    ("soai", "den"): 4, ("soai", "do"): 15,     # general (tướng/将帥)
+    ("vua", "den"): 4, ("vua", "do"): 15,        # alias: VUA(king) — tránh lẫn "tượng"
     ("tot", "den"): 6, ("tot", "do"): 17,
 }
 NAME = {v: k for k, v in {

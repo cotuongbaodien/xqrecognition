@@ -58,7 +58,7 @@ def main():
 
     # dedupe real sources (one augmentation per original)
     seen = {}
-    for ip in glob.glob(f"{ROOT}/data/items_v19/*/images/items_v16_*"):
+    for ip in glob.glob(f"{ROOT}/data/items_v20/*/images/items_v16_*"):
         b = os.path.basename(ip)
         base = re.sub(r"^items_v16_", "", b)
         base = re.sub(r"\.rf\..*$", "", base)

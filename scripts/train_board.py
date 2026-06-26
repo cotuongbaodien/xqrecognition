@@ -13,12 +13,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from ultralytics import YOLO
 
-from config.settings import (
-    BOARD_SEG_DATA,
-    BOARD_SEG_MODEL,
-    MODELS_DIR,
-    BOARD_SEG_TRAIN_CONFIG,
-)
+from boarddetection.settings import MODELS_DIR, BOARD_SEG_TRAIN_CONFIG
+
+BOARD_SEG_MODEL = MODELS_DIR / "board_seg.pt"        # prod model (auto-deploy target)
+BOARD_SEG_DATA = PROJECT_ROOT / "data" / "board_seg_v6"  # default dataset dir
 
 
 def find_data_yaml(data_dir: Path) -> Path:
@@ -49,7 +47,7 @@ def train_board_model(
     img_size: int = None,
     device: str = None,
     resume: bool = False,
-    pretrained: str = "yolov8n-seg.pt",
+    pretrained: str = "yolo11n-seg.pt",
 ):
     """
     Train the board segmentation model.
@@ -109,15 +107,17 @@ def train_board_model(
         project=str(PROJECT_ROOT / "runs" / "board_seg"),
         name="train",
         exist_ok=True,
-        # Augmentation settings matching Roboflow
-        flipud=0.5,         # Vertical flip probability
-        fliplr=0.5,         # Horizontal flip probability
-        degrees=15.0,       # Rotation ±15°
-        shear=13.0,         # Shear ±13°
-        hsv_h=0.015,        # HSV-Hue augmentation
-        hsv_s=0.15,         # HSV-Saturation (brightness)
-        hsv_v=0.1,          # HSV-Value (exposure)
-        mosaic=1.0,         # Mosaic augmentation
+        # Augmentation (ORIGINAL config — restored after the skew-aug ablation
+        # showed aggressive perspective/rotation regressed straight boards -7
+        # for only +2 skewed = net loss).
+        flipud=0.5,         # Vertical flip
+        fliplr=0.5,         # Horizontal flip
+        degrees=15.0,       # Rotation +/-15
+        shear=13.0,         # Shear +/-13
+        hsv_h=0.015,        # Hue
+        hsv_s=0.15,         # Saturation
+        hsv_v=0.1,          # Exposure
+        mosaic=1.0,         # Mosaic
     )
 
     # Copy best model to models directory
@@ -139,7 +139,7 @@ def main():
     parser.add_argument("--img-size", type=int, help="Image size")
     parser.add_argument("--device", type=str, help="Device (cpu/cuda/mps/auto)")
     parser.add_argument("--resume", action="store_true", help="Resume training")
-    parser.add_argument("--pretrained", type=str, default="yolov8n-seg.pt",
+    parser.add_argument("--pretrained", type=str, default="yolo11n-seg.pt",
                         help="Pretrained model")
 
     args = parser.parse_args()

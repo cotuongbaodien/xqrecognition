@@ -133,7 +133,7 @@ def main():
     os.makedirs(f"{outdir}/crops", exist_ok=True)
     flagged = []          # (srcnum, yolo_id, pred, conf, crop)
     by_src = defaultdict(list)
-    imgs = glob.glob(f"{ROOT}/data/items_v19/train/images/items_v16_*")
+    imgs = glob.glob(f"{ROOT}/data/items_v20/train/images/items_v16_*")
     sm = torch.nn.Softmax(1)
     print(f"scanning {len(imgs)} real images...")
     for ip in imgs:
