@@ -1,0 +1,37 @@
+# OCR (boarddetection) — Xiangqi board recognition, CPU bằng ONNX Runtime.
+#
+# Bản LEAN cho VPS (KHÔNG GPU): bỏ torch + ultralytics, chỉ onnxruntime + numpy
+# + opencv-headless → image ~400MB (so với ~10GB bản GPU). Chạy 2 model .onnx
+# (items.onnx imgsz 960, board_seg.onnx imgsz 640) qua boarddetection/onnx_backend.py.
+#
+# Build:  docker build -f boarddetection/Dockerfile.cpu -t ocr-cpu:latest ./boarddetection
+# Run:    docker compose -f docker-compose.cpu.yml up -d   (đặt OCR_MODEL_FORMAT=onnx)
+FROM python:3.11-slim
+
+# OpenCV (cv2) cần libGL + glib ngay cả ở bản headless; base slim không có sẵn.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Chỉ deps runtime CPU — KHÔNG torch/ultralytics.
+RUN pip install --no-cache-dir \
+        fastapi==0.115.6 \
+        "uvicorn[standard]==0.32.1" \
+        python-multipart==0.0.20 \
+        onnxruntime==1.19.2 \
+        opencv-python-headless==4.10.0.84 \
+        numpy==2.1.3
+
+# Package source. models/ bị .dockerignore loại ra → bind-mount .onnx lúc runtime
+# (không bake model vào image, giống bản GPU).
+COPY . /app/boarddetection/
+
+RUN mkdir -p /app/boarddetection/models
+
+EXPOSE 8001
+
+# Backend ONNX (CPU). server.py: `from .pipeline import ...` resolve nhờ chạy từ /app.
+ENV OCR_MODEL_FORMAT=onnx
+CMD ["uvicorn", "boarddetection.server:app", "--host", "0.0.0.0", "--port", "8001"]

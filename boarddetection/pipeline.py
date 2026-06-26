@@ -3,6 +3,7 @@ Main detection pipeline for Xiangqi Recognition System.
 Combines board detection, piece detection, and FEN generation.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 from pathlib import Path
@@ -78,7 +79,12 @@ class XiangqiRecognizer:
         self.fen_generator = FENGenerator()
         self.rules_validator = RulesValidator()
 
-        items_path = items_model_path or str(ITEMS_MODEL)
+        # Backend: "onnx" (CPU/VPS, onnxruntime) hoặc "pt" (GPU máy nhà, ultralytics).
+        # Chọn bằng env OCR_MODEL_FORMAT=onnx; mặc định "pt" để KHÔNG đụng deploy GPU.
+        ext = ".onnx" if os.environ.get("OCR_MODEL_FORMAT", "pt").lower() == "onnx" else ".pt"
+
+        default_items = str(MODELS_DIR / f"items{ext}")
+        items_path = items_model_path or default_items
         if not Path(items_path).exists():
             raise FileNotFoundError(f"Items model not found at {items_path}")
         self.item_detector.load_model(items_path)
@@ -88,7 +94,7 @@ class XiangqiRecognizer:
         # the grid quad, the two palace masks give the rank axis -> orientation
         # (90deg / cam-doc) cue. Trained at imgsz 640 to match inference.
         self.board_segmenter = None
-        seg_path = MODELS_DIR / "board_seg.pt"
+        seg_path = MODELS_DIR / f"board_seg{ext}"
         if seg_path.exists():
             self.board_segmenter = BoardSegmenter(str(seg_path))
             print(f"Loaded board-seg model from {seg_path}")

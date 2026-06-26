@@ -50,8 +50,12 @@ class BoardSegmenter:
             self.load_model(model_path)
 
     def load_model(self, model_path: str):
-        from ultralytics import YOLO
-        self.model = YOLO(model_path)
+        if str(model_path).endswith(".onnx"):
+            from .onnx_backend import OnnxYOLO
+            self.model = OnnxYOLO(model_path, task="segment")
+        else:
+            from ultralytics import YOLO
+            self.model = YOLO(model_path)
 
     def detect(
         self, image: np.ndarray, confidence: float = 0.25, imgsz: int = 640

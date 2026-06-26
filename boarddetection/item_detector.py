@@ -20,7 +20,6 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from .settings import (
     ITEM_CLASSES,
@@ -87,7 +86,13 @@ class ItemDetector:
             self.load_model(model_path)
 
     def load_model(self, model_path: str):
-        self.model = YOLO(model_path)
+        # ONNX (CPU/VPS) vs ultralytics (.pt, GPU máy nhà) — chọn theo đuôi file.
+        if str(model_path).endswith(".onnx"):
+            from .onnx_backend import OnnxYOLO
+            self.model = OnnxYOLO(model_path, task="detect")
+        else:
+            from ultralytics import YOLO
+            self.model = YOLO(model_path)
         self.model_path = model_path
 
     def detect(

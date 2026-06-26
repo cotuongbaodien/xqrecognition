@@ -8,7 +8,6 @@ from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from .settings import (
     PIECE_CLASSES,
@@ -66,6 +65,7 @@ class PieceDetector:
 
     def load_model(self, model_path: str):
         """Load the YOLOv8 detection model."""
+        from ultralytics import YOLO  # lazy: image CPU/ONNX không có ultralytics
         self.model = YOLO(model_path)
         self.model_path = model_path
 
