@@ -20,6 +20,8 @@ import logging
 import os
 import sys
 import time
+import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -27,6 +29,7 @@ from typing import Optional
 import cv2
 import numpy as np
 from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from .dataset_saver import save_sample
@@ -57,6 +60,63 @@ OCR_SHARED_SECRET = os.environ.get("OCR_SHARED_SECRET", "")
 # DIR rỗng = tắt. MODE: "all" lưu mọi ảnh, "failed" chỉ lưu ảnh detected=false.
 DATASET_DIR = os.environ.get("OCR_DATASET_DIR", "")
 DATASET_MODE = os.environ.get("OCR_DATASET_MODE", "all").lower()
+# Ingest NGẦM (Flow B): sau khi trả FEN, POST ảnh+kết quả về portal để lưu R2 +
+# ocr_logs (gom data train). Bỏ trống = tắt. URL là env nên dời server OCR sau này
+# chỉ cần đổi sang URL public portal. Auth = X-OCR-Secret (giống Flow A relay).
+OCR_INGEST_URL = os.environ.get("OCR_INGEST_URL", "")
+OCR_MODEL_VERSION = os.environ.get("OCR_MODEL_VERSION", "yolo11-onnx")
+
+
+def _ingest(raw: bytes, content_type: str, fields: dict) -> None:
+    """Gửi ảnh + metadata về portal /api/ocr/ingest (multipart). Chạy trong
+    BackgroundTasks → KHÔNG cộng vào thời gian trả FEN. Lỗi chỉ log, không ảnh hưởng."""
+    if not OCR_INGEST_URL or not OCR_SHARED_SECRET:
+        return
+    try:
+        boundary = "----xqdet" + uuid.uuid4().hex
+        buf = io.BytesIO()
+        for k, v in fields.items():
+            buf.write(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+            )
+        buf.write(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
+            f'filename="board.jpg"\r\nContent-Type: {content_type}\r\n\r\n'.encode()
+        )
+        buf.write(raw)
+        buf.write(f"\r\n--{boundary}--\r\n".encode())
+        req = urllib.request.Request(
+            OCR_INGEST_URL,
+            data=buf.getvalue(),
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "X-OCR-Secret": OCR_SHARED_SECRET,
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10).read()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ingest failed: %s", e)
+
+
+# Archive Flow B kiểu QUEUE: /detect ghi ảnh + meta ra đĩa (luôn thành công, tách
+# khỏi request). Cron đêm đẩy queue → portal /api/ocr/ingest (R2 + ocr_logs) rồi XOÁ.
+OCR_QUEUE_DIR = os.environ.get("OCR_QUEUE_DIR", "/app/boarddetection/ingest_queue")
+
+
+def _queue_save(raw: bytes, meta: dict) -> None:
+    try:
+        os.makedirs(OCR_QUEUE_DIR, exist_ok=True)
+        fid = (
+            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            + "_" + uuid.uuid4().hex[:8]
+        )
+        with open(os.path.join(OCR_QUEUE_DIR, fid + ".jpg"), "wb") as f:
+            f.write(raw)
+        with open(os.path.join(OCR_QUEUE_DIR, fid + ".json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("queue_save failed: %s", e)
 
 
 def _b64d(s: str) -> bytes:
@@ -74,7 +134,7 @@ OCR_TOKEN_SCOPE = "detect"
 _seen_jti: dict[str, float] = {}
 
 
-def _verify_token(token: str) -> bool:
+def _verify_token(token: str) -> Optional[dict]:
     """Verify a short-lived HMAC token issued by the portal (Flow B).
 
     Token = base64url(payload_json) + "." + base64url(HMAC_SHA256(secret, payload_b64)).
@@ -87,34 +147,34 @@ def _verify_token(token: str) -> bool:
     Flow A (header X-OCR-Secret tĩnh) KHÔNG đi qua đây nên không bị ảnh hưởng.
     """
     if not token or not OCR_SHARED_SECRET or "." not in token:
-        return False
+        return None
     try:
         payload_b64, sig_b64 = token.rsplit(".", 1)
         expected = hmac.new(
             OCR_SHARED_SECRET.encode(), payload_b64.encode(), hashlib.sha256
         ).digest()
         if not hmac.compare_digest(expected, _b64d(sig_b64)):  # 1) chữ ký
-            return False
+            return None
         payload = json.loads(_b64d(payload_b64))
         if payload.get("scope") != OCR_TOKEN_SCOPE:            # 2) scope
-            return False
+            return None
         exp = float(payload.get("exp", 0))
         if exp < time.time():                                  # 3) hết hạn (TTL ~120s)
-            return False
+            return None
         jti = payload.get("jti")
         if not jti:                                            # 4) bắt buộc có jti để single-use
-            return False
+            return None
         now = time.time()
         # Dọn các jti đã hết hạn để cache không phình (window chỉ ~120s).
         if _seen_jti:
             for stale in [k for k, v in _seen_jti.items() if v < now]:
                 del _seen_jti[stale]
         if jti in _seen_jti:                                   # 5) đã dùng → replay
-            return False
+            return None
         _seen_jti[jti] = exp
-        return True
+        return payload
     except Exception:
-        return False
+        return None
 
 
 app = FastAPI(title="boarddetection", version="1.0.0")
@@ -145,15 +205,18 @@ async def detect(
     x_ocr_secret: str = Header(default=""),
     x_ocr_token: str = Header(default=""),
 ) -> JSONResponse:
+    t_req = time.time()  # đo tổng thời gian server xử lý: nhận request → trả FEN
     # Auth: long-lived shared secret (portal relay = Flow A) OR a short-lived
     # signed token (mobile uploads straight here = Flow B). Either one passes.
     # auth_via được log ở dòng detect bên dưới để biết request đi đường nào.
     auth_via = "none"
+    tok_payload: dict = {}
     if OCR_SHARED_SECRET:
         if hmac.compare_digest(x_ocr_secret, OCR_SHARED_SECRET):
             auth_via = "secret"        # Flow A (relay qua portal)
-        elif _verify_token(x_ocr_token):
+        elif (_tp := _verify_token(x_ocr_token)) is not None:
             auth_via = "token"         # Flow B (app upload thẳng)
+            tok_payload = _tp
         else:
             raise HTTPException(status_code=401, detail="unauthorized")
     if _recognizer is None:
@@ -172,7 +235,11 @@ async def detect(
 
     t0 = time.time()
     try:
-        result = _recognizer.recognize_image(img, piece_confidence=MIN_CONFIDENCE)
+        # Chạy inference trong threadpool: onnxruntime nhả GIL → nhiều request
+        # detect song song (không chặn event loop) → hết cảnh request thứ 2 timeout.
+        result = await run_in_threadpool(
+            lambda: _recognizer.recognize_image(img, piece_confidence=MIN_CONFIDENCE)
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("recognize failed")
         raise HTTPException(status_code=500, detail=f"recognize_failed: {exc}") from exc
@@ -201,8 +268,9 @@ async def detect(
             detected = False
 
     logger.info(
-        "detect auth=%s detected=%s conf=%.3f pieces=%d ms=%d errors=%s",
-        auth_via, detected, result.confidence, len(result.pieces), elapsed_ms, errors,
+        "detect auth=%s detected=%s conf=%.3f pieces=%d size_kb=%d infer_ms=%d total_ms=%d errors=%s",
+        auth_via, detected, result.confidence, len(result.pieces),
+        len(raw) // 1024, elapsed_ms, int((time.time() - t_req) * 1000), errors,
     )
 
     if DATASET_DIR and (DATASET_MODE != "failed" or not detected):
@@ -216,6 +284,26 @@ async def detect(
                 "pieces_count": len(result.pieces),
                 "errors": errors,
                 "processing_ms": elapsed_ms,
+            },
+        )
+
+    # Archive NGẦM Flow B: ghi ảnh + meta ra QUEUE đĩa (cron đêm đẩy R2 + xoá).
+    # Flow A đã được portal archive sẵn nên bỏ qua. Chạy trong BackgroundTasks →
+    # KHÔNG cộng vào thời gian trả FEN, lỗi cũng không ảnh hưởng response.
+    if auth_via == "token" and OCR_QUEUE_DIR:
+        background_tasks.add_task(
+            _queue_save,
+            raw,
+            {
+                "fen": result.fen or "",
+                "detected": "1" if detected else "0",
+                "confidence": f"{float(result.confidence):.3f}",
+                "pieces": str(len(result.pieces)),
+                "errors": ",".join(errors),
+                "processing_ms": str(elapsed_ms),
+                "uid": str(tok_payload.get("uid", "")),
+                "dev": str(tok_payload.get("dev", "")),
+                "model_version": OCR_MODEL_VERSION,
             },
         )
 

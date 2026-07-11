@@ -1,0 +1,67 @@
+# =============================================================================
+# OCR (boarddetection) — STANDALONE stack on the home GPU machine.
+#
+# Tách khỏi pikafishcloudengine (2026-06-17) để OCR chạy ĐỘC LẬP:
+#   - Tunnel RIÊNG (không đi chung tunnel engine nữa) → khi engine move lên VPS,
+#     OCR vẫn sống bình thường ở máy nhà này.
+#   - Hostname public GIỮ NGUYÊN `ocr.abcxq.app` → portal KHÔNG phải đổi gì.
+#
+# Bring up:  docker compose up -d
+# Chỉ gồm 2 service: ocr (YOLO/GPU) + cloudflared (tunnel riêng cho OCR).
+# =============================================================================
+name: ocr-gpu
+
+services:
+  ocr:
+    # Tái dùng image engine đã build sẵn (10.2GB) cho cutover tức thì — KHÔNG
+    # build lại. Lần đầu chạy:  docker tag abcengine-ocr:latest ocr-gpu:latest
+    # Về sau sửa code OCR thì: docker compose build ocr  (build từ ./boarddetection)
+    image: ocr-gpu:latest
+    build:
+      context: ./boarddetection
+    container_name: ocr-gpu
+    restart: unless-stopped
+    environment:
+      # PHẢI khớp OCR_SHARED_SECRET bên portal .env.production (header X-OCR-Secret).
+      - OCR_SHARED_SECRET=${OCR_SHARED_SECRET:-}
+      # Auto-label dataset tuần (giữ như cũ).
+      - OCR_DATASET_DIR=/app/boarddetection/dataset
+      - OCR_DATASET_MODE=${OCR_DATASET_MODE:-all}
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-}
+      - ROBOFLOW_PROJECT=${ROBOFLOW_PROJECT:-}
+    volumes:
+      # Models hot-swap được trên host (đổi file .pt → docker compose restart ocr).
+      - ./boarddetection/models:/app/boarddetection/models:ro
+      # Dataset auto-label (images + YOLO labels) — upload Roboflow tay mỗi tuần.
+      - ./boarddetection/dataset:/app/boarddetection/dataset
+    ports:
+      # 8002 (KHÔNG 8001) để khỏi đụng container OCR cũ `abcengine-ocr` còn chạy
+      # lúc cutover. Chỉ để test local; tunnel đi qua `ocr:8001` nội bộ docker.
+      - "127.0.0.1:8002:8001"
+    gpus: all
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ocr-gpu-cloudflared
+    restart: unless-stopped
+    # HTTP/2 thay QUIC — QUIC hay rớt trên mạng VN (giống lý do bên engine).
+    command: tunnel --no-autoupdate run --protocol http2 --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - ocr
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

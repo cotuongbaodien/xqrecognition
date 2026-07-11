@@ -1,0 +1,81 @@
+# =============================================================================
+# OCR (boarddetection) — bản CPU/ONNX cho VPS portal (103.175.146.124, KHÔNG GPU).
+#
+# Khác bản GPU (docker-compose.yml):
+#   - build từ Dockerfile.cpu (onnxruntime, ~400MB) thay vì image GPU 10GB.
+#   - KHÔNG `gpus: all`, KHÔNG service cloudflared (VPS expose qua nginx + portal).
+#   - OCR_MODEL_FORMAT=onnx → pipeline nạp items.onnx + board_seg.onnx.
+#
+# Build & run:  docker compose -f docker-compose.cpu.yml up -d --build
+# Test local:   curl 127.0.0.1:8001/health
+# =============================================================================
+name: xqdetection
+
+services:
+  ocr:
+    image: xqdetection:latest
+    build:
+      context: ./boarddetection
+      dockerfile: Dockerfile.cpu
+    container_name: xqdetection
+    restart: unless-stopped
+    # Để gọi ingest về portal NỘI BỘ (host.docker.internal:3100) — tránh vòng ra
+    # Cloudflare (CF 403 client không-browser). Khi tách OCR sang server khác thì
+    # đổi OCR_INGEST_URL sang URL public portal + mở WAF cho path /api/ocr/ingest.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Backend ONNX (CPU). Bắt buộc để pipeline chọn .onnx thay .pt.
+      - OCR_MODEL_FORMAT=onnx
+      # Số luồng onnxruntime (để trống = onnxruntime tự quyết theo #core VPS).
+      - OCR_ONNX_THREADS=${OCR_ONNX_THREADS:-}
+      # PHẢI khớp OCR_SHARED_SECRET bên portal .env.production (X-OCR-Secret / token).
+      - OCR_SHARED_SECRET=${OCR_SHARED_SECRET:-}
+      # Ingest ngầm (Flow B): URL portal nhận ảnh để lưu R2 + ocr_logs. Trống = tắt.
+      # Dùng URL PUBLIC portal (chạy được cả khi sau này tách OCR sang server khác).
+      - OCR_INGEST_URL=${OCR_INGEST_URL:-}
+      - OCR_MODEL_VERSION=${OCR_MODEL_VERSION:-yolo11-onnx}
+      # Auto-label dataset (giữ như bản GPU; để trống DIR = tắt).
+      - OCR_DATASET_DIR=${OCR_DATASET_DIR:-}
+      - OCR_DATASET_MODE=${OCR_DATASET_MODE:-all}
+    volumes:
+      # Bind-mount toàn bộ code → đổi server.py/log không cần rebuild image (chỉ
+      # ship .py + restart). Model .onnx + dataset nằm trong này luôn.
+      - ./boarddetection:/app/boarddetection
+      # Models để :ro (mount đè lên, chống ghi nhầm).
+      - ./boarddetection/models:/app/boarddetection/models:ro
+    ports:
+      # Loopback-only: portal (Flow A) + nginx (Flow B) reach qua 127.0.0.1:8001.
+      - "127.0.0.1:8001:8001"
+    mem_limit: 4g
+    # Cap CỨNG tổng CPU = 4 core (CFS quota) — dù nhiều request đồng thời, OCR không
+    # bao giờ ăn quá 4/8 core → luôn chừa ≥4 core cho engine/portal. Đây là MỨC TRẦN,
+    # KHÔNG phải đặt chỗ: khi OCR idle, 4 core này engine dùng thoải mái.
+    cpus: 4.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Connector tunnel ocr-gpu chạy TRÊN VPS (cùng token máy nhà). CF cân tải giữa
+  # 2 connector; sau khi healthy thì STOP cloudflared máy nhà → OCR về hẳn VPS.
+  # Resolve service `ocr:8001` qua mạng compose (đúng như hostname đã map).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: xqdetection-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --protocol http2 --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - ocr
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
