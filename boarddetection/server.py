@@ -56,7 +56,8 @@ MIN_PIECES = int(os.environ.get("OCR_MIN_PIECES", "5"))
 # Optional shared-secret. Nếu set, mọi request /detect phải gửi đúng header
 # X-OCR-Secret. Bỏ trống = không check (backward-compatible cho localhost).
 OCR_SHARED_SECRET = os.environ.get("OCR_SHARED_SECRET", "")
-# Auto-label dataset cho vòng retrain Roboflow hàng tuần (dataset_saver.py).
+# Auto-label dataset cho vòng retrain (dataset_saver.py; review local bằng
+# scripts/weekly_ingest.py + apply_review.py).
 # DIR rỗng = tắt. MODE: "all" lưu mọi ảnh, "failed" chỉ lưu ảnh detected=false.
 DATASET_DIR = os.environ.get("OCR_DATASET_DIR", "")
 DATASET_MODE = os.environ.get("OCR_DATASET_MODE", "all").lower()

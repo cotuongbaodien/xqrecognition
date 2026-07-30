@@ -8,9 +8,9 @@ For every image in the folder:
     dataset/<batch-name>/{images,labels}/ (+ data.yaml, meta.jsonl),
   - append the pixel hash to dataset/seen_hashes.txt so the weekly loop
     never re-saves these images — from now on weekly folders hold only
-    NEW user uploads,
-  - if ROBOFLOW_API_KEY/ROBOFLOW_PROJECT are set, upload to the Roboflow
-    Annotate queue under the same batch name (review there, then train).
+    NEW user uploads.
+
+Review the result locally with scripts/weekly_ingest.py + apply_review.py.
 
 Re-runnable: already-seen hashes are skipped, so a crashed run just resumes.
 """
@@ -24,7 +24,6 @@ from pathlib import Path
 
 import cv2
 
-from . import roboflow_uploader
 from .dataset_saver import _load_seen, _yolo_lines, _lock
 from .pipeline import XiangqiRecognizer
 from .settings import ITEM_CLASS_NAMES
@@ -48,7 +47,7 @@ def main() -> None:
     recognizer = XiangqiRecognizer()
     seen = _load_seen(DATASET_ROOT)
     files = sorted(src.glob("*.jpg"))
-    stats = {"saved": 0, "dup": 0, "decode_fail": 0, "uploaded": 0, "upload_fail": 0}
+    stats = {"saved": 0, "dup": 0, "decode_fail": 0}
 
     for i, f in enumerate(files, 1):
         img = cv2.imread(str(f))
@@ -87,17 +86,6 @@ def main() -> None:
                 fh.write(digest + "\n")
             seen.add(digest)
         stats["saved"] += 1
-
-        if roboflow_uploader.enabled():
-            image_id = roboflow_uploader.upload_sample(
-                buf.tobytes(), digest, lines, batch=batch
-            )
-            if image_id:
-                stats["uploaded"] += 1
-                with (DATASET_ROOT / "uploaded.txt").open("a", encoding="utf-8") as fh:
-                    fh.write(f"{digest} {image_id}\n")
-            else:
-                stats["upload_fail"] += 1
 
         if i % 25 == 0 or i == len(files):
             print(f"[{i}/{len(files)}] {stats}", flush=True)

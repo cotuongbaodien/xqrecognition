@@ -1,21 +1,21 @@
-"""Auto-label dataset saver for the weekly Roboflow retrain loop.
+"""Auto-label dataset saver for the retrain loop.
 
 Every /detect upload can be saved as a YOLO-format training sample, labeled
 with the model's own predictions (pre-annotation). Samples land in per-ISO-week
-folders and are also pushed to Roboflow's Annotate queue when configured
-(roboflow_uploader.py); the local folder doubles as backup / manual fallback:
+folders on disk:
 
     <root>/
       seen_hashes.txt          # global dedupe — one sha1 prefix per line
       2026-W24/
-        data.yaml              # YOLO descriptor (18 class names, Roboflow import)
+        data.yaml              # YOLO descriptor (18 class names)
         images/<hash>.jpg      # re-encoded pixels (EXIF stripped, matches labels)
         labels/<hash>.txt      # class_id cx cy w h (normalized, 18 classes)
         meta.jsonl             # one line per sample: detected/fen/confidence/...
 
 Labels use the post-NMS piece list (one box per physical piece — duplicate
-boxes would poison training) plus every detected landmark. The reviewer on
-Roboflow fixes wrong/missing boxes before merging into the main dataset.
+boxes would poison training) plus every detected landmark. Review happens
+locally: scripts/weekly_ingest.py builds per-class galleries from these
+folders, scripts/apply_review.py applies the corrections.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from typing import List, Optional, Set
 import cv2
 import numpy as np
 
-from . import roboflow_uploader
 from .settings import ITEM_CLASS_NAMES
 
 logger = logging.getLogger("ocr_service.dataset")
@@ -118,18 +117,6 @@ def save_sample(
                 "dataset saved %s (%d labels) -> %s", digest, len(lines), week.name
             )
 
-        # Network call OUTSIDE the lock — must not stall other saves. The
-        # local copy above is the source of truth; failed uploads stay
-        # visible as hashes in seen_hashes.txt missing from uploaded.txt.
-        if roboflow_uploader.enabled():
-            image_id = roboflow_uploader.upload_sample(
-                buf.tobytes(), digest, lines, batch=f"auto-{week.name}"
-            )
-            if image_id:
-                with _lock, (root / "uploaded.txt").open(
-                    "a", encoding="utf-8"
-                ) as f:
-                    f.write(f"{digest} {image_id}\n")
         return digest
     except Exception:
         logger.exception("dataset save failed")

@@ -27,12 +27,10 @@ services:
       # Auto-label dataset tuần (giữ như cũ).
       - OCR_DATASET_DIR=/app/boarddetection/dataset
       - OCR_DATASET_MODE=${OCR_DATASET_MODE:-all}
-      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY:-}
-      - ROBOFLOW_PROJECT=${ROBOFLOW_PROJECT:-}
     volumes:
       # Models hot-swap được trên host (đổi file .pt → docker compose restart ocr).
       - ./boarddetection/models:/app/boarddetection/models:ro
-      # Dataset auto-label (images + YOLO labels) — upload Roboflow tay mỗi tuần.
+      # Dataset auto-label (images + YOLO labels) — review local qua weekly_ingest.py.
       - ./boarddetection/dataset:/app/boarddetection/dataset
     ports:
       # 8002 (KHÔNG 8001) để khỏi đụng container OCR cũ `abcengine-ocr` còn chạy
