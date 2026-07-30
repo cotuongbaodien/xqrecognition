@@ -96,9 +96,14 @@ def main():
         e = man[idx]
         byfile[e["file"]][e["line"]] = new
         chg[(NAME[old], NAME[new])] += 1
-    nl, skip = 0, 0
+    nl, skip, missing = 0, 0, 0
     for f, lines in byfile.items():
         path = os.path.join(ROOT, f)
+        if not os.path.exists(path):
+            # source image was de-leaked/quarantined (held-out) — label gone,
+            # nothing to fix (it won't be trained on). Skip gracefully.
+            missing += len(lines)
+            continue
         L = open(path, encoding="utf-8").read().splitlines()
         for li, new in lines.items():
             p = L[li].split()
@@ -109,7 +114,7 @@ def main():
             L[li] = " ".join(p)
             nl += 1
         open(path, "w", encoding="utf-8").write("\n".join(L) + "\n")
-    print(f"{tag}: sua {nl} box (skip {skip})")
+    print(f"{tag}: sua {nl} box (skip {skip}, de-leaked/missing {missing})")
     for k, v in chg.most_common():
         print(f"  {v:3d}  {k[0]} -> {k[1]}")
 

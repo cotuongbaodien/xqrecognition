@@ -33,12 +33,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from boarddetection.settings import ITEM_CLASSES, ITEMS_MODEL  # noqa: E402
 
-# Self-contained workspace for the whole weekly flow (gitignored).
-#   weekly/inbox/2026-WNN/images/  <- COPY server images here
-#   weekly/staging/{images,labels} <- pseudo-labeled, pre-review (auto)
-#   weekly/review/<N.tag>/sheet_*  <- label review galleries (auto)
-#   weekly/test_candidates/        <- test picks (pick_test_candidates.py)
-# On --merge, staging/ moves into the canonical trainset data/items_v20/train/.
+# Self-contained, PER-PERIOD workspace (gitignored). One isolated folder per
+# ingest period (run ~every 1-2 months, not weekly). Point --batch at it:
+#   ingest/<period>/inbox/         <- raw images to pseudo-label
+#   ingest/<period>/bench_holdout/ <- images held out for the FEN benchmark
+#   ingest/<period>/staging/{images,labels} <- pseudo-labeled, pre-review (auto)
+#   ingest/<period>/review/<N.tag>/sheet_*  <- label review galleries (auto)
+# On --merge, that period's staging/ moves into data/items_v20/train/.
+# WEEKLY/INBOX/STAGE/REVIEW_DIR below are DEFAULTS; --batch overrides them in
+# main() so every path is scoped under the chosen period folder.
 WEEKLY = os.path.join(ROOT, "weekly")
 INBOX = os.path.join(WEEKLY, "inbox")
 STAGE = os.path.join(WEEKLY, "staging")
@@ -73,8 +76,11 @@ def _week_of(path, input_dir):
     return os.path.basename(os.path.normpath(input_dir))
 
 
-def detect_and_stage(input_dir, conf):
+def detect_and_stage(input_dir, conf, model_path=None, device=None, period=None):
     from ultralytics import YOLO
+    # `period` (when set) is used as the staged-name tag for ALL images, so a
+    # flat inbox stages as weekly_<period>_<stem> instead of weekly_inbox_<stem>.
+    wk = lambda p: period if period else _week_of(p, input_dir)
     # recursive: --input can be ONE week folder OR a parent of week-subfolders
     # (each with images/). Skip anything under a labels/ dir.
     imgs = [p for p in glob.glob(os.path.join(input_dir, "**", "*"), recursive=True)
@@ -83,14 +89,21 @@ def detect_and_stage(input_dir, conf):
     if not imgs:
         print(f"No images in {input_dir}")
         return None
-    weeks = sorted({_week_of(p, input_dir) for p in imgs})
+    weeks = sorted({wk(p) for p in imgs})
     print(f"Weeks: {', '.join(weeks)}")
     os.makedirs(os.path.join(STAGE, "images"), exist_ok=True)
     os.makedirs(os.path.join(STAGE, "labels"), exist_ok=True)
 
-    print(f"Loading {ITEMS_MODEL} ...")
-    model = YOLO(str(ITEMS_MODEL))
-    print(f"Detecting {len(imgs)} images (conf>={conf}, imgsz=960) ...")
+    mpath = model_path or str(ITEMS_MODEL)
+    print(f"Loading {mpath} ...")
+    model = YOLO(mpath)
+    # ONNX weights load via onnxruntime; if only CPUExecutionProvider is present
+    # (no onnxruntime-gpu), inference MUST run on cpu or ultralytics errors on
+    # GPU IO-binding. .pt weights default to auto-GPU when device is None.
+    dev = device
+    if dev is None and mpath.lower().endswith(".onnx"):
+        dev = "cpu"
+    print(f"Detecting {len(imgs)} images (conf>={conf}, imgsz=960, device={dev or 'auto'}) ...")
 
     dist = Counter()
     n_imgs = n_box = 0
@@ -100,7 +113,7 @@ def detect_and_stage(input_dir, conf):
             print(f"  skip unreadable: {ip}")
             continue
         H, W = im.shape[:2]
-        res = model(im, conf=conf, imgsz=960, verbose=False)[0]
+        res = model(im, conf=conf, imgsz=960, verbose=False, device=dev)[0]
         lines = []
         if res.boxes is not None:
             for i in range(len(res.boxes)):
@@ -114,7 +127,7 @@ def detect_and_stage(input_dir, conf):
                 dist[cid] += 1
         # unique staged name: weekly_<week>_<origstem>
         stem = os.path.splitext(os.path.basename(ip))[0]
-        base = f"weekly_{_week_of(ip, input_dir)}_{stem}"
+        base = f"weekly_{wk(ip)}_{stem}"
         ext = os.path.splitext(ip)[1].lower()
         shutil.copy(ip, os.path.join(STAGE, "images", base + ext))
         with open(os.path.join(STAGE, "labels", base + ".txt"), "w",
@@ -130,10 +143,17 @@ def detect_and_stage(input_dir, conf):
     return n_imgs
 
 
-def build_galleries():
+def build_galleries(review_dir=None, tile=None):
     """Per-class review sheets + manifests for the staged incoming labels.
-    Mirrors review_gallery.py output so apply_review.py works unchanged."""
+    Mirrors review_gallery.py output so apply_review.py works unchanged.
+
+    Re-runnable: rebuilding after a review pass drops every box already
+    re-labelled (it now belongs to another class's gallery) and every box
+    marked for deletion (sentinel 99), so a fresh set only shows what is
+    still labelled as that class."""
     import json
+    review_dir = review_dir or REVIEW_DIR
+    sz = tile or SZ
     per_class = defaultdict(list)   # cid -> [(crop, relfile, line, src)]
     for ip in glob.glob(os.path.join(STAGE, "images", "*")):
         lp = os.path.join(STAGE, "labels",
@@ -158,13 +178,13 @@ def build_galleries():
             if cr.size == 0:
                 continue
             rel = os.path.relpath(lp, ROOT).replace("\\", "/")
-            per_class[cid].append((cv2.resize(cr, (SZ, SZ)), rel, li,
+            per_class[cid].append((cv2.resize(cr, (sz, sz)), rel, li,
                                    os.path.basename(ip)))
 
-    os.makedirs(REVIEW_DIR, exist_ok=True)
+    os.makedirs(review_dir, exist_ok=True)
     for cid, tag in CID2TAG.items():
         items = per_class.get(cid, [])
-        d = os.path.join(REVIEW_DIR, f"{PREFIX[tag]}.{tag}")
+        d = os.path.join(review_dir, f"{PREFIX[tag]}.{tag}")
         os.makedirs(d, exist_ok=True)
         for old in glob.glob(os.path.join(d, "sheet_*.jpg")):
             os.remove(old)
@@ -172,27 +192,27 @@ def build_galleries():
         nsheets = (len(items) + PER - 1) // PER
         for s in range(nsheets):
             chunk = items[s * PER:(s + 1) * PER]
-            canvas = np.full((ROWS * SZ, COLS * SZ, 3), 255, np.uint8)
+            canvas = np.full((ROWS * sz, COLS * sz, 3), 255, np.uint8)
             for k, (cr, f, li, src) in enumerate(chunk):
                 gidx = s * PER + k
                 tile = cr.copy()
-                cv2.putText(tile, str(gidx), (2, 13),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 255), 1)
-                canvas[(k // COLS) * SZ:(k // COLS) * SZ + SZ,
-                       (k % COLS) * SZ:(k % COLS) * SZ + SZ] = tile
+                cv2.putText(tile, str(gidx), (2, 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 255), 1)
+                canvas[(k // COLS) * sz:(k // COLS) * sz + sz,
+                       (k % COLS) * sz:(k % COLS) * sz + sz] = tile
                 manifest.append({"idx": gidx, "file": f, "line": li,
                                  "susp": 0.0, "src": src})
             cv2.imencode(".jpg", canvas)[1].tofile(
                 os.path.join(d, f"sheet_{s + 1:03d}.jpg"))
         json.dump(manifest, open(
-            os.path.join(REVIEW_DIR, f"manifest_{tag}.json"), "w"), indent=1)
+            os.path.join(review_dir, f"manifest_{tag}.json"), "w"), indent=1)
         if items:
             print(f"  {tag:8s}: {len(items)} crop, {nsheets} sheet")
-    print(f"\n-> Review sheets: weekly/review/<N.tag>/sheet_NNN.jpg")
-    print("   Fix:  python scripts/apply_review.py <tag> '<idx>=<class> ...' "
-          "--dir weekly/review")
-    print("   Test: python scripts/pick_test_candidates.py --n 20")
-    print("   Then: python scripts/weekly_ingest.py --merge")
+    rel = os.path.relpath(review_dir, ROOT).replace("\\", "/")
+    print(f"\n-> Review sheets: {rel}/<N.tag>/sheet_NNN.jpg")
+    print(f"   Fix:  python scripts/apply_review.py <tag> '<idx>=<class> ...' "
+          f"--dir {rel}")
+    print(f"   Then: python scripts/weekly_ingest.py --batch {os.path.relpath(WEEKLY, ROOT)} --merge")
 
 
 def merge():
@@ -239,18 +259,56 @@ def merge():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", default=INBOX,
-                    help="folder to ingest (default: weekly/inbox/, with "
-                         "2026-WNN/images subfolders). Recursive.")
+    ap.add_argument("--batch", default=None,
+                    help="period workspace dir (e.g. ingest/2026-07-11). Scopes "
+                         "inbox/staging/review under it. Default: weekly/ (legacy)")
+    ap.add_argument("--period", default=None,
+                    help="staged-name tag for a flat inbox (default: --batch "
+                         "basename). Groups this period's images in the trainset.")
+    ap.add_argument("--input", default=None,
+                    help="folder to ingest (default: <batch>/inbox/). Recursive.")
     ap.add_argument("--conf", type=float, default=0.25)
+    ap.add_argument("--model", default=None,
+                    help="detector weights (default: settings.ITEMS_MODEL). "
+                         "Pass a .onnx to run the deployed ONNX model.")
+    ap.add_argument("--device", default=None,
+                    help="cpu | 0 | ... (default: auto; .onnx forced to cpu "
+                         "unless onnxruntime-gpu is installed)")
     ap.add_argument("--merge", action="store_true",
                     help="finalize: purge sentinels + move staging into train/")
+    ap.add_argument("--gallery-only", action="store_true",
+                    help="skip detect: rebuild review sheets from the CURRENT "
+                         "staging labels (use after a review pass — fixed boxes "
+                         "move to their new class, sentinels drop out)")
+    ap.add_argument("--review-dir", default=None,
+                    help="where to write the sheets (default <batch>/review). "
+                         "Use a dated dir for a fresh pass, e.g. "
+                         "ingest/2026-07-11/review_2026-07-30")
+    ap.add_argument("--tile", type=int, default=None,
+                    help=f"tile size in px (default {SZ})")
     args = ap.parse_args()
+
+    # --batch scopes every path under one period folder (isolated per period).
+    global WEEKLY, INBOX, STAGE, REVIEW_DIR
+    period = args.period
+    if args.batch:
+        WEEKLY = os.path.abspath(args.batch)
+        INBOX = os.path.join(WEEKLY, "inbox")
+        STAGE = os.path.join(WEEKLY, "staging")
+        REVIEW_DIR = os.path.join(WEEKLY, "review")
+        if not period:
+            period = os.path.basename(os.path.normpath(WEEKLY))
+    input_dir = args.input or INBOX
 
     if args.merge:
         merge()
         return
-    week = detect_and_stage(args.input, args.conf)
+    if args.gallery_only:
+        print("Rebuilding review galleries from current staging labels ...")
+        build_galleries(args.review_dir and os.path.abspath(args.review_dir),
+                        args.tile)
+        return
+    week = detect_and_stage(input_dir, args.conf, args.model, args.device, period)
     if week:
         print("\nBuilding review galleries ...")
         build_galleries()
