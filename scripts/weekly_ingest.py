@@ -62,6 +62,14 @@ PREFIX = {tag: i + 1 for i, tag in enumerate(ORDER)}
 SZ, COLS, ROWS = 80, 10, 10
 PER = COLS * ROWS
 
+# How many of each piece a legal board can hold. A picture pseudo-labelled with
+# MORE than this many of one class must contain a mistake — the strongest cheap
+# signal we have for ranking cells by suspicion (see build_galleries).
+MAXN = {0: 2, 1: 2, 2: 2, 3: 2, 4: 1, 5: 2, 6: 5,          # black
+        11: 2, 12: 2, 13: 2, 14: 2, 15: 1, 16: 2, 17: 5}   # red
+PALACE_CIDS = {0, 11, 4, 15}      # advisors + generals: must sit in the palace
+PALACE_LANDMARKS = {8, 9, 10}     # palace-bottom / palace-center / palace-conner
+
 
 def imread_u(path):
     return cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
@@ -143,18 +151,60 @@ def detect_and_stage(input_dir, conf, model_path=None, device=None, period=None)
     return n_imgs
 
 
-def build_galleries(review_dir=None, tile=None):
+def _suspicion(items, cid):
+    """Rank a class's cells worst-first. Three signals, in priority order:
+
+    1. **excess** — how many boxes of this class the picture holds beyond what
+       a legal board allows. A photo with 3 "black general" boxes has at least
+       two wrong ones; a photo with 1 is almost certainly right. Measured on
+       the 150 hand-found errors in `soaiden` (2026-08-17): 0.29% of cells in
+       1-box pictures were wrong vs 18% / 43% / 70% in 2- / 3- / 4-box ones.
+    2. **size deviation** — |log(area / class median area)|. Catches the junk
+       crops (half a piece, a board corner) that get marked `bo`.
+    3. **palace distance** — generals and advisors may not leave the palace, so
+       distance to the nearest palace landmark flags impossible placements.
+       Meaningless for the other classes, which get 0.
+
+    Same 150-error yardstick, share of errors caught by reviewing only the
+    first N% of the class: 5% -> 65%, 10% -> 93%, 20% -> 95%, 30% -> 97%.
+    Unsorted, reviewing N% catches ~N%.
+    """
+    areas = np.array([it["area"] for it in items])
+    med = np.median(areas) if len(areas) else 1.0
+    for it in items:
+        it["adev"] = abs(np.log(max(it["area"], 1e-9) / max(med, 1e-9)))
+        if cid not in PALACE_CIDS:
+            it["geo"] = 0.0
+    items.sort(key=lambda it: (-it["exc"], -it["adev"], -it["geo"]))
+    return items
+
+
+def build_galleries(review_dir=None, tile=None, sort_susp=False):
     """Per-class review sheets + manifests for the staged incoming labels.
     Mirrors review_gallery.py output so apply_review.py works unchanged.
 
     Re-runnable: rebuilding after a review pass drops every box already
     re-labelled (it now belongs to another class's gallery) and every box
     marked for deletion (sentinel 99), so a fresh set only shows what is
-    still labelled as that class."""
+    still labelled as that class.
+
+    `sort_susp` orders each class worst-first (see _suspicion) instead of by
+    filename, so the reviewer meets almost every mistake in the first sheets
+    and can stop once they dry up."""
     import json
     review_dir = review_dir or REVIEW_DIR
     sz = tile or SZ
-    per_class = defaultdict(list)   # cid -> [(crop, relfile, line, src)]
+    # Pass 1 (labels only, no image decode): per-picture class counts, needed
+    # for the excess signal before any cropping happens.
+    counts = {}
+    for lp in glob.glob(os.path.join(STAGE, "labels", "*.txt")):
+        c = Counter()
+        for ln in open(lp, encoding="utf-8"):
+            p = ln.split()
+            if p:
+                c[int(p[0])] += 1
+        counts[os.path.basename(lp)] = c
+    per_class = defaultdict(list)   # cid -> [dict(crop, file, line, src, ...)]
     for ip in glob.glob(os.path.join(STAGE, "images", "*")):
         lp = os.path.join(STAGE, "labels",
                           os.path.splitext(os.path.basename(ip))[0] + ".txt")
@@ -164,8 +214,11 @@ def build_galleries(review_dir=None, tile=None):
         if im is None:
             continue
         H, W = im.shape[:2]
-        for li, ln in enumerate(open(lp, encoding="utf-8")):
-            p = ln.split()
+        rowsl = [ln.split() for ln in open(lp, encoding="utf-8")]
+        cnt = counts.get(os.path.basename(lp), Counter())
+        palace = [(float(p[1]), float(p[2])) for p in rowsl
+                  if p and int(p[0]) in PALACE_LANDMARKS]
+        for li, p in enumerate(rowsl):
             if not p:
                 continue
             cid = int(p[0])
@@ -178,12 +231,20 @@ def build_galleries(review_dir=None, tile=None):
             if cr.size == 0:
                 continue
             rel = os.path.relpath(lp, ROOT).replace("\\", "/")
-            per_class[cid].append((cv2.resize(cr, (sz, sz)), rel, li,
-                                   os.path.basename(ip)))
+            per_class[cid].append({
+                "crop": cv2.resize(cr, (sz, sz)), "file": rel, "line": li,
+                "src": os.path.basename(ip),
+                "exc": max(0, cnt[cid] - MAXN.get(cid, 99)),
+                "area": w * h,
+                "geo": (min(np.hypot(a - x, b - yy) for a, b in palace)
+                        if palace else 9.0),
+            })
 
     os.makedirs(review_dir, exist_ok=True)
     for cid, tag in CID2TAG.items():
         items = per_class.get(cid, [])
+        if sort_susp and items:
+            items = _suspicion(items, cid)
         d = os.path.join(review_dir, f"{PREFIX[tag]}.{tag}")
         os.makedirs(d, exist_ok=True)
         for old in glob.glob(os.path.join(d, "sheet_*.jpg")):
@@ -193,21 +254,29 @@ def build_galleries(review_dir=None, tile=None):
         for s in range(nsheets):
             chunk = items[s * PER:(s + 1) * PER]
             canvas = np.full((ROWS * sz, COLS * sz, 3), 255, np.uint8)
-            for k, (cr, f, li, src) in enumerate(chunk):
+            for k, it in enumerate(chunk):
                 gidx = s * PER + k
-                tile = cr.copy()
+                tile = it["crop"].copy()
                 cv2.putText(tile, str(gidx), (2, 14),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 255), 1)
                 canvas[(k // COLS) * sz:(k // COLS) * sz + sz,
                        (k % COLS) * sz:(k % COLS) * sz + sz] = tile
-                manifest.append({"idx": gidx, "file": f, "line": li,
-                                 "susp": 0.0, "src": src})
+                manifest.append({"idx": gidx, "file": it["file"],
+                                 "line": it["line"],
+                                 "susp": round(it["exc"] + it.get("adev", 0), 3),
+                                 "exc": it["exc"], "src": it["src"]})
             cv2.imencode(".jpg", canvas)[1].tofile(
                 os.path.join(d, f"sheet_{s + 1:03d}.jpg"))
         json.dump(manifest, open(
             os.path.join(review_dir, f"manifest_{tag}.json"), "w"), indent=1)
         if items:
-            print(f"  {tag:8s}: {len(items)} crop, {nsheets} sheet")
+            # Cells breaking the count rule are where the mistakes live; tell
+            # the reviewer exactly how far they must go before it thins out.
+            nexc = sum(1 for it in items if it["exc"] > 0)
+            hot = (nexc + PER - 1) // PER
+            extra = (f"  <- vi pham luat dem: {nexc} o = sheet 001-{hot:03d}"
+                     if sort_susp and nexc else "")
+            print(f"  {tag:8s}: {len(items)} crop, {nsheets} sheet{extra}")
     rel = os.path.relpath(review_dir, ROOT).replace("\\", "/")
     print(f"\n-> Review sheets: {rel}/<N.tag>/sheet_NNN.jpg")
     print(f"   Fix:  python scripts/apply_review.py <tag> '<idx>=<class> ...' "
@@ -286,6 +355,10 @@ def main():
                          "ingest/2026-07-11/review_2026-07-30")
     ap.add_argument("--tile", type=int, default=None,
                     help=f"tile size in px (default {SZ})")
+    ap.add_argument("--sort-susp", action="store_true",
+                    help="order each class worst-first (count-rule violations, "
+                         "then odd-sized crops, then generals/advisors outside "
+                         "the palace) so the mistakes land on the first sheets")
     args = ap.parse_args()
 
     # --batch scopes every path under one period folder (isolated per period).
@@ -306,12 +379,12 @@ def main():
     if args.gallery_only:
         print("Rebuilding review galleries from current staging labels ...")
         build_galleries(args.review_dir and os.path.abspath(args.review_dir),
-                        args.tile)
+                        args.tile, args.sort_susp)
         return
     week = detect_and_stage(input_dir, args.conf, args.model, args.device, period)
     if week:
         print("\nBuilding review galleries ...")
-        build_galleries()
+        build_galleries(sort_susp=args.sort_susp)
 
 
 if __name__ == "__main__":
