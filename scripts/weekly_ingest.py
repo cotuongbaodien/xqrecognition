@@ -165,9 +165,27 @@ def _suspicion(items, cid):
        distance to the nearest palace landmark flags impossible placements.
        Meaningless for the other classes, which get 0.
 
-    Same 150-error yardstick, share of errors caught by reviewing only the
-    first N% of the class: 5% -> 65%, 10% -> 93%, 20% -> 95%, 30% -> 97%.
-    Unsorted, reviewing N% catches ~N%.
+    ⚠️ **DO NOT TRUST THIS — it is off by default for a reason.** The ranking
+    was validated on `soaiden` (5% of the class -> 65% of its errors, 10% ->
+    93%) and then failed on `soaido`, where the very same signal ran *backwards*:
+
+        cells per picture     soaiden wrong     soaido wrong
+        1                          0.29%            2.66%
+        2                         18.4%             0.30%
+        3                         43.5%             0.00%
+        4+                        70.0%             0.00%
+
+    A picture holding six red generals really does hold six red generals — it
+    is a photo of a pile of pieces, and every crop in it is correctly labelled.
+    Black generals are the ones the detector over-predicts, so there the extra
+    boxes are the mistakes. Model confidence inverts between the two classes
+    too. Which way a signal points is a property of the class, and there is no
+    way to know it before a human has labelled that class.
+
+    Reviewing `soaido`'s first 12 "hot" sheets caught 3 of its 172 errors —
+    worse than reading the sheets in file order. Anyone reviving this must
+    first show the correlation holds on at least two independently-labelled
+    classes.
     """
     areas = np.array([it["area"] for it in items])
     med = np.median(areas) if len(areas) else 1.0

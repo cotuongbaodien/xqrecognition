@@ -117,6 +117,53 @@ def main():
     print(f"{tag}: sua {nl} box (skip {skip}, de-leaked/missing {missing})")
     for k, v in chg.most_common():
         print(f"  {v:3d}  {k[0]} -> {k[1]}")
+    _proof(tag, truth, man, old, os.path.join(ROOT, args.dir))
+
+
+def _proof(tag, truth, man, old, review_dir):
+    """Write a contact sheet of the cells just changed, each captioned with its
+    new class.
+
+    On 2026-08-17 a whole class (172 cells) was applied against the wrong
+    gallery: the reviewer was reading one review dir while --dir pointed at
+    another, and the two number their idx differently. Nothing in the output
+    revealed it — the counts looked perfectly normal. One glance at these crops
+    does: if the pieces do not match the captions, the --dir is wrong. Cheap
+    insurance, so it runs on every apply.
+    """
+    import cv2
+    import numpy as np
+
+    picks = [(i, n) for i, n in truth.items() if n != old][:24]
+    if not picks:
+        return
+    stage = os.path.dirname(os.path.dirname(os.path.join(ROOT, man[picks[0][0]]["file"])))
+    sz, cols = 110, 8
+    rows_n = (len(picks) + cols - 1) // cols
+    canvas = np.full((rows_n * (sz + 20), cols * sz, 3), 255, np.uint8)
+    for k, (idx, new) in enumerate(picks):
+        e = man[idx]
+        ip = os.path.join(stage, "images", e["src"])
+        im = cv2.imdecode(np.fromfile(ip, np.uint8), cv2.IMREAD_COLOR) \
+            if os.path.exists(ip) else None
+        if im is None:
+            continue
+        lp = os.path.join(ROOT, e["file"])
+        p = open(lp, encoding="utf-8").read().splitlines()[e["line"]].split()
+        H, W = im.shape[:2]
+        x, y, w, h = [float(v) for v in p[1:5]]
+        cr = im[max(0, int((y - h / 2) * H)):int((y + h / 2) * H),
+                max(0, int((x - w / 2) * W)):int((x + w / 2) * W)]
+        if cr.size == 0:
+            continue
+        r0, c0 = (k // cols) * (sz + 20), (k % cols) * sz
+        canvas[r0:r0 + sz, c0:c0 + sz] = cv2.resize(cr, (sz, sz))
+        cv2.putText(canvas, f"{NAME[new]} #{idx}", (c0 + 2, r0 + sz + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 0, 255), 1)
+    out = os.path.join(review_dir, f"_applied_{tag}.jpg")
+    cv2.imencode(".jpg", canvas)[1].tofile(out)
+    print(f"  kiem chung: {os.path.relpath(out, ROOT)} "
+          f"(quan phai khop nhan; khong khop = sai --dir)")
 
 
 if __name__ == "__main__":
