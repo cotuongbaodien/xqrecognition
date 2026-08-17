@@ -164,12 +164,46 @@ class RulesValidator:
 
         return board_state
 
+    def _snap_general(
+        self,
+        board_state: BoardState,
+        row: int,
+        col: int,
+        piece: str,
+    ) -> None:
+        """Move a general off an illegal square onto the nearest free palace
+        cell. No-op when every palace cell is taken (the general stays put —
+        an illegal square still beats no general at all)."""
+        free = [
+            (r, c) for (r, c) in VALID_POSITIONS[piece]
+            if board_state.board[r][c] is None
+        ]
+        if not free:
+            return
+        # Nearest by squared grid distance; (row, col) breaks ties so the
+        # choice is deterministic.
+        r, c = min(free, key=lambda rc: ((rc[0] - row) ** 2 + (rc[1] - col) ** 2,
+                                         rc[0], rc[1]))
+        board_state.board[row][col] = None
+        board_state.board[r][c] = piece
+
     def _fix_invalid_positions(
         self,
         board_state: BoardState,
         confidences: Dict[Tuple[int, int], float]
     ) -> BoardState:
-        """Remove pieces at invalid positions (low confidence only)."""
+        """Remove pieces at invalid positions (low confidence only).
+
+        Generals are exempt from removal: each side has exactly one, and
+        server.py forces detected=False when either is missing, so deleting a
+        general turns a partially-wrong board into a guaranteed failure. A
+        general on an illegal square is a grid-mapping slip, not a phantom
+        piece — snap it to the nearest free palace cell instead, and keep it
+        where it is if the palace has no room.
+
+        Measured on 201 real submissions prod had rejected (2026-08-17): 13 of
+        the 135 missing-general failures were caused by this removal.
+        """
         for row in range(GRID_ROWS):
             for col in range(GRID_COLS):
                 piece = board_state.board[row][col]
@@ -180,7 +214,10 @@ class RulesValidator:
                         # detections might indicate unusual but real positions
                         # (or board orientation issues)
                         if conf < 0.7:
-                            board_state.board[row][col] = None
+                            if piece in ('K', 'k'):
+                                self._snap_general(board_state, row, col, piece)
+                            else:
+                                board_state.board[row][col] = None
 
         # Check pawn constraints
         for row in range(GRID_ROWS):
