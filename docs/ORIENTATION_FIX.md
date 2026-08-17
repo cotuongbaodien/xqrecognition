@@ -4,6 +4,17 @@ Status: **design / not yet implemented** (2026-06-06). Discovered while
 auditing the 20 hard-core test failures: many palace-piece (tướng/sĩ)
 errors are actually *orientation* bugs, not piece-classification bugs.
 
+> **Xem thêm (2026-07-20):** [`ROT180_TRAINING_GAP.md`](./ROT180_TRAINING_GAP.md) —
+> một lớp lỗi orientation **khác**, nằm TRƯỚC toàn bộ pipeline mô tả ở đây. Với bàn cờ
+> lật ngược (đỏ ở trên), YOLO detector phân loại sai con tướng ngay từ bước detect, nên
+> FEN thiếu hẳn `k`/`K` và `server.py` trả `detected=false`. Hậu xử lý trong doc này có
+> sửa cũng vô ích khi quân cờ chưa từng được detect.
+>
+> ⚠️ **Cập nhật 2026-08-17:** giả thuyết nguyên nhân của doc đó (lỗ hổng tập train,
+> `flipud=0.0` + `degrees=45`) **đã bị số liệu bác bỏ** — train v20 vốn đã có 37,5% bàn
+> lật, và prod fail 3,96% (đỏ dưới) vs 5,01% (đen dưới), p≈0,13. Xem §Đính chính trong
+> `ROT180_TRAINING_GAP.md`.
+
 User-observed symptoms:
 1. Phone in **portrait** photographing a **landscape** board → whole board
    recognized in the wrong direction.
