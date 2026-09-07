@@ -213,6 +213,17 @@ def load_reviewed(path):
     """
     import json
     cfg = json.load(open(path, encoding="utf-8"))
+    # one pass = one gallery + what was finished in it. Reviewing spans several
+    # galleries (each rebuild renumbers idx), so keep them side by side.
+    passes = cfg.get("passes") or [cfg]
+    seen = set()
+    for one in passes:
+        seen |= _one_pass(one)
+    return seen
+
+
+def _one_pass(cfg):
+    import json
     mdir = os.path.join(ROOT, cfg["manifest_dir"])
     seen = set()
     for tag, rule in cfg.get("done", {}).items():
@@ -225,7 +236,9 @@ def load_reviewed(path):
             if rule == "all":
                 ok = True
             elif "max_idx" in rule:
-                ok = e["idx"] <= rule["max_idx"]
+                ok = e["idx"] <= rule["max_idx"] or e["idx"] in rule.get("idx", [])
+            elif "idx" in rule:
+                ok = e["idx"] in rule["idx"]
             else:
                 ok = any(e["src"].startswith(x) for x in rule["src_prefix"])
             if ok:

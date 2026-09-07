@@ -72,6 +72,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("tag")
     ap.add_argument("spec")
+    ap.add_argument("--from-any", action="store_true",
+                    help="also change cells that were ALREADY re-labelled "
+                         "(use to undo a wrong fix; without it they are skipped)")
     ap.add_argument("--dir", default="data/label_review",
                     help="review dir holding manifest_<tag>.json "
                          "(e.g. data/label_review_incoming for weekly ingest)")
@@ -91,11 +94,10 @@ def main():
     byfile = defaultdict(dict)
     chg = Counter()
     for idx, new in truth.items():
-        if new == old:
+        if new == old and not args.from_any:
             continue
         e = man[idx]
         byfile[e["file"]][e["line"]] = new
-        chg[(NAME[old], NAME[new])] += 1
     nl, skip, missing = 0, 0, 0
     for f, lines in byfile.items():
         path = os.path.join(ROOT, f)
@@ -107,11 +109,18 @@ def main():
         L = open(path, encoding="utf-8").read().splitlines()
         for li, new in lines.items():
             p = L[li].split()
-            if int(p[0]) != old:
+            was = int(p[0])
+            # normally only cells still holding this gallery's class may change:
+            # a second report of the same idx is a typo, not a re-fix. --from-any
+            # lifts that so an earlier WRONG fix can be corrected.
+            if was != old and not args.from_any:
                 skip += 1
+                continue
+            if was == new:
                 continue
             p[0] = str(new)
             L[li] = " ".join(p)
+            chg[(NAME[was], NAME[new])] += 1
             nl += 1
         open(path, "w", encoding="utf-8").write("\n".join(L) + "\n")
     print(f"{tag}: sua {nl} box (skip {skip}, de-leaked/missing {missing})")
