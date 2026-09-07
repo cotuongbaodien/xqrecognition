@@ -197,7 +197,45 @@ def _suspicion(items, cid):
     return items
 
 
-def build_galleries(review_dir=None, tile=None, sort_susp=False):
+def load_reviewed(path):
+    """Read a `reviewed.json` progress file -> {(label file, line)} already seen.
+
+    A review pass is recorded against the gallery it was done on, because idx
+    only means anything there:
+
+        {"manifest_dir": "ingest/2026-07-11/review_2026-08-17",
+         "done": {"soaiden": "all",                  # whole class checked
+                  "tuongden": {"max_idx": 3899},     # stopped after sheet 039
+                  "xeden": {"src_prefix": ["weekly_2026-07-11_"]}}}
+
+    Cells are keyed by (file, line), not by class, so a box the reviewer moved
+    to another class stays skipped in its new class's gallery too.
+    """
+    import json
+    cfg = json.load(open(path, encoding="utf-8"))
+    mdir = os.path.join(ROOT, cfg["manifest_dir"])
+    seen = set()
+    for tag, rule in cfg.get("done", {}).items():
+        mf = os.path.join(mdir, f"manifest_{tag}.json")
+        if not os.path.exists(mf):
+            print(f"  ! {tag}: no manifest in {cfg['manifest_dir']}, skipped")
+            continue
+        n = 0
+        for e in json.load(open(mf, encoding="utf-8")):
+            if rule == "all":
+                ok = True
+            elif "max_idx" in rule:
+                ok = e["idx"] <= rule["max_idx"]
+            else:
+                ok = any(e["src"].startswith(x) for x in rule["src_prefix"])
+            if ok:
+                seen.add((e["file"], e["line"]))
+                n += 1
+        print(f"  {tag:8s}: {n} o da review -> bo qua")
+    return seen
+
+
+def build_galleries(review_dir=None, tile=None, sort_susp=False, skip=None):
     """Per-class review sheets + manifests for the staged incoming labels.
     Mirrors review_gallery.py output so apply_review.py works unchanged.
 
@@ -208,7 +246,11 @@ def build_galleries(review_dir=None, tile=None, sort_susp=False):
 
     `sort_susp` orders each class worst-first (see _suspicion) instead of by
     filename, so the reviewer meets almost every mistake in the first sheets
-    and can stop once they dry up."""
+    and can stop once they dry up.
+
+    `skip` is a set of (label file, line) already reviewed in an earlier
+    gallery; those cells are left out entirely, so a rebuild after adding
+    new pictures shows ONLY what nobody has looked at yet."""
     import json
     review_dir = review_dir or REVIEW_DIR
     sz = tile or SZ
@@ -242,13 +284,15 @@ def build_galleries(review_dir=None, tile=None, sort_susp=False):
             cid = int(p[0])
             if cid not in CID2TAG:
                 continue
+            rel = os.path.relpath(lp, ROOT).replace("\\", "/")
+            if skip and (rel, li) in skip:
+                continue
             x, yy, w, h = [float(v) for v in p[1:5]]
             x1, y1 = int((x - w / 2) * W), int((yy - h / 2) * H)
             x2, y2 = int((x + w / 2) * W), int((yy + h / 2) * H)
             cr = im[max(0, y1):y2, max(0, x1):x2]
             if cr.size == 0:
                 continue
-            rel = os.path.relpath(lp, ROOT).replace("\\", "/")
             per_class[cid].append({
                 "crop": cv2.resize(cr, (sz, sz)), "file": rel, "line": li,
                 "src": os.path.basename(ip),
@@ -373,6 +417,10 @@ def main():
                          "ingest/2026-07-11/review_2026-07-30")
     ap.add_argument("--tile", type=int, default=None,
                     help=f"tile size in px (default {SZ})")
+    ap.add_argument("--skip-reviewed", default=None,
+                    help="path to a reviewed.json progress file; every "
+                         "cell already reviewed in the gallery it names is "
+                         "left out of the rebuild (see load_reviewed)")
     ap.add_argument("--sort-susp", action="store_true",
                     help="order each class worst-first (count-rule violations, "
                          "then odd-sized crops, then generals/advisors outside "
@@ -395,9 +443,15 @@ def main():
         merge()
         return
     if args.gallery_only:
+        skip = None
+        if args.skip_reviewed:
+            print("Reading review progress ...")
+            skip = load_reviewed(args.skip_reviewed)
+            print(f"  -> {len(skip)} o se KHONG xuat hien lai")
+            print()
         print("Rebuilding review galleries from current staging labels ...")
         build_galleries(args.review_dir and os.path.abspath(args.review_dir),
-                        args.tile, args.sort_susp)
+                        args.tile, args.sort_susp, skip)
         return
     week = detect_and_stage(input_dir, args.conf, args.model, args.device, period)
     if week:
