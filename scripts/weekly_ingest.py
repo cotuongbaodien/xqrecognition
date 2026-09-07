@@ -235,7 +235,8 @@ def load_reviewed(path):
     return seen
 
 
-def build_galleries(review_dir=None, tile=None, sort_susp=False, skip=None):
+def build_galleries(review_dir=None, tile=None, sort_susp=False, skip=None,
+                    rank=None):
     """Per-class review sheets + manifests for the staged incoming labels.
     Mirrors review_gallery.py output so apply_review.py works unchanged.
 
@@ -250,7 +251,11 @@ def build_galleries(review_dir=None, tile=None, sort_susp=False, skip=None):
 
     `skip` is a set of (label file, line) already reviewed in an earlier
     gallery; those cells are left out entirely, so a rebuild after adding
-    new pictures shows ONLY what nobody has looked at yet."""
+    new pictures shows ONLY what nobody has looked at yet.
+
+    `rank` maps 'file|line' -> a safety score (second_opinion.py): the
+    lower, the more the two model views argue about that cell. Sheets are
+    then ordered worst-first, so stopping early still costs the least."""
     import json
     review_dir = review_dir or REVIEW_DIR
     sz = tile or SZ
@@ -305,7 +310,10 @@ def build_galleries(review_dir=None, tile=None, sort_susp=False, skip=None):
     os.makedirs(review_dir, exist_ok=True)
     for cid, tag in CID2TAG.items():
         items = per_class.get(cid, [])
-        if sort_susp and items:
+        if rank and items:
+            items = sorted(items,
+                           key=lambda it: rank.get(f"{it['file']}|{it['line']}", 1.0))
+        elif sort_susp and items:
             items = _suspicion(items, cid)
         d = os.path.join(review_dir, f"{PREFIX[tag]}.{tag}")
         os.makedirs(d, exist_ok=True)
@@ -421,6 +429,14 @@ def main():
                     help="path to a reviewed.json progress file; every "
                          "cell already reviewed in the gallery it names is "
                          "left out of the rebuild (see load_reviewed)")
+    ap.add_argument("--skip-pairs", default=None,
+                    help="json list of [label file, line] to leave out too "
+                         "(e.g. second_opinion.py --write-agree: cells two "
+                         "model views confidently agree on)")
+    ap.add_argument("--rank-pairs", default=None,
+                    help="json {'file|line': score} from second_opinion.py "
+                         "--write-rank; sorts every class worst-first (ô hai "
+                         "model cãi nhau lên đầu, rồi conf thấp dần)")
     ap.add_argument("--sort-susp", action="store_true",
                     help="order each class worst-first (count-rule violations, "
                          "then odd-sized crops, then generals/advisors outside "
@@ -443,15 +459,25 @@ def main():
         merge()
         return
     if args.gallery_only:
-        skip = None
+        skip = set()
         if args.skip_reviewed:
             print("Reading review progress ...")
-            skip = load_reviewed(args.skip_reviewed)
-            print(f"  -> {len(skip)} o se KHONG xuat hien lai")
-            print()
+            skip |= load_reviewed(args.skip_reviewed)
+        if args.skip_pairs:
+            import json as _json
+            pairs = _json.load(open(args.skip_pairs, encoding="utf-8"))
+            skip |= {(f, int(li)) for f, li in pairs}
+            print(f"  {len(pairs)} o hai model dong y -> bo qua")
+        print(f"  -> {len(skip)} o se KHONG xuat hien lai")
+        print()
+        rank = None
+        if args.rank_pairs:
+            import json as _json
+            rank = _json.load(open(args.rank_pairs, encoding="utf-8"))
+            print(f"  xep hang theo {len(rank)} diem second-opinion")
         print("Rebuilding review galleries from current staging labels ...")
         build_galleries(args.review_dir and os.path.abspath(args.review_dir),
-                        args.tile, args.sort_susp, skip)
+                        args.tile, args.sort_susp, skip, rank)
         return
     week = detect_and_stage(input_dir, args.conf, args.model, args.device, period)
     if week:
