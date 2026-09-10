@@ -819,10 +819,12 @@ def main():
                    help="một FEN phải lặp lại bấy nhiêu mẫu mới được ghi")
 
     g = ap.add_argument_group("cắt")
-    g.add_argument("--lead", type=float, default=300,
-                   help="lấy dư bao nhiêu giây TRƯỚC ván (mặc định 5 phút)")
-    g.add_argument("--tail", type=float, default=300,
-                   help="lấy dư bao nhiêu giây SAU ván (mặc định 5 phút)")
+    # 120s: đủ dư để không cụt (pha xếp bàn đo được chỉ ~15-20 giây), mà ghi đĩa ít
+    # hơn hẳn mức 300s — trên ổ cứng cơ chính việc ghi mới là chỗ nghẽn.
+    g.add_argument("--lead", type=float, default=120,
+                   help="lấy dư bao nhiêu giây TRƯỚC ván (mặc định 2 phút)")
+    g.add_argument("--tail", type=float, default=120,
+                   help="lấy dư bao nhiêu giây SAU ván (mặc định 2 phút)")
     g.add_argument("--dry-run", action="store_true",
                    help="in lệnh ffmpeg ra chứ không cắt thật")
     g.add_argument("--overwrite", action="store_true",

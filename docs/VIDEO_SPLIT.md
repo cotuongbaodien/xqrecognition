@@ -165,9 +165,13 @@ ffmpeg -ss <start> -i <video> -t <dur> -map 0:v:0 -map 0:a? \
   6,0 s nên lệch tối đa 6 s; `index.csv` in cả mốc yêu cầu lẫn **mốc thật sau snap**.
 - `-map 0:v:0 -map 0:a?` chứ không `-map 0`: `-map 0` kéo theo cả stream dữ liệu mp4
   mà copy sang mp4 hay lỗi; dấu `?` để video không có tiếng cũng chạy.
-- **Mặc định lấy dư `--lead 300` giây TRƯỚC và `--tail 300` giây SAU mỗi ván** để chắc
-  chắn không sót. Hệ quả: các clip **chồng lấn nhau** và tổng dung lượng lớn hơn video
-  gốc (video mẫu 0,72 GB → 6 clip tổng 1,3 GB). Muốn gọn thì hạ xuống `--lead 20 --tail 20`.
+- **Mặc định lấy dư `--lead 120` giây TRƯỚC và `--tail 120` giây SAU mỗi ván.** Pha xếp
+  bàn đo được chỉ ~15-20 giây nên 2 phút là quá đủ để không cụt. Hệ quả: các clip vẫn
+  **chồng lấn nhau** và tổng dung lượng lớn hơn video gốc.
+- Con số này quyết định thời gian chạy nhiều hơn người ta tưởng: trên **ổ cứng cơ**,
+  chỗ nghẽn là ghi đĩa, không phải model. Đo trên kho 416 giờ: `--lead/--tail 300`
+  ≈ 3,4 phút xử lý cho mỗi giờ video (≈23 tiếng cho cả kho); hạ xuống 120 giảm khoảng
+  30% lượng ghi.
 - Cắt xong thì **dời luôn video gốc vào thư mục** thành `00_goc_<tên>.<ext>` (`--no-move`
   để tắt). Chỉ dời khi đã cắt được ít nhất một clip, và không dời khi `--dry-run`.
 - Clip đã tồn tại thì bỏ qua (chạy lại được); `--overwrite` để ghi đè.
@@ -235,7 +239,7 @@ Muốn ra biên bản thật cần một bước riêng, chưa làm:
 | `--min-gap` | 120 s | ván ngắn nhất trong video mẫu ~3,7 phút |
 | `--confirm-*` | 60 s / d≥25 / ≤25 quân / 3 mẫu | chặn thế giữa ván tình cờ giống khai cuộc |
 | `--reset-lead` | 25 s | ván trước coi như hết trước khi bắt đầu xếp lại |
-| `--lead` / `--tail` | **300 s** | lấy dư 5 phút mỗi đầu cho chắc (yêu cầu của người dùng) |
+| `--lead` / `--tail` | **120 s** | dư 2 phút mỗi đầu là đủ (pha xếp bàn chỉ ~15-20 s); 300 s ghi đĩa nhiều hơn ~30% mà gần như không cứu thêm được gì |
 
 ---
 
