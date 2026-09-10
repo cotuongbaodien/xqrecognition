@@ -1,122 +1,97 @@
-# Trạng Thái Hiện Tại - Xiangqi Recognition
+# Trạng thái hiện tại
 
-**Cập nhật:** 2026-04-09
+**Cập nhật: 2026-09-10.** Doc này là chỗ bắt đầu — hệ thống đang ở đâu, số đo thật là
+bao nhiêu, prod đang chạy gì. Mục lục toàn bộ doc: [`README.md`](README.md).
 
-## Kết quả
+---
 
-**Test trên 52 ảnh fendata (mirror-tolerant metric):**
-
-| Metric | Số ảnh | Tỷ lệ |
-|--------|--------|-------|
-| Exact FEN match | 29 | 55.8% |
-| Mirror match (sau khi flip ngang) | 7 | 13.5% |
-| **Total OK (mirror-tolerant)** | **36** | **69.2%** |
-| ≥95% cells đúng | 46 | 88.5% |
-| ≥90% cells đúng | 50 | 96.2% |
-| **Avg cell accuracy** | - | **96.4%** |
-
-**Lý do dùng mirror-tolerant metric:** App cờ tướng của user có chức năng mirror trái-phải, nên FEN bị mirror vẫn dùng được. Chỉ cần thế cờ đúng (vertical orientation đúng + piece positions đúng tương đối).
-
-## Models hiện có
-
-| Model | Mục đích | mAP50 | Backup |
-|-------|----------|-------|--------|
-| `models/pieces_det.pt` | Detect 14 piece classes (legacy) | 0.99 | `backups/pieces_v1_67pct.pt` |
-| `models/items.pt` | Detect 18 classes (pieces + landmarks) | 0.926 | `backups/items_v1_mAP0.926.pt` |
-| `models/board_det.pt` | Detect board bounding box | - | - |
-| `models/landmarks.pt` | Detect 4 landmark types (legacy) | 0.959 | - |
-
-## Pipeline Hiện Tại
+## 1. Hệ thống gồm những gì
 
 ```
-Input image
-   ↓
-1. Pieces detection (pieces_det.pt - legacy 14 classes)
-   ↓ 32 pieces max + NMS IoU=0.35
-2. Item detection (items.pt - 18 classes)
-   ↓ landmarks: board-conner, palace-bottom, palace-center, palace-conner
-3. Build grid:
-   - Primary: board_det.pt bbox + 2% margin (most stable)
-   - Fallback 1: items.pt landmarks → bilinear/homography
-   - Fallback 2: board_seg.pt intersections
-4. Map pieces to grid (confidence-weighted, distance threshold)
-5. Validate game rules (count limits, position constraints)
-6. Vertical orientation only (red king at bottom, black king at top)
-   - NO horizontal mirror (consuming app handles it)
-7. Generate FEN
+Ảnh → board_seg.pt (khoanh bàn + cửu cung) → 4 góc → homography → lưới 9×10
+                 ↘ items.pt (14 quân + 4 landmark) → snap quân vào lưới → FEN
 ```
 
-## Class Naming Convention (CHUẨN MỚI)
+**Chỉ còn 2 model.** Mọi doc nói tới `pieces_det.pt`, `board_det.pt`, `landmarks.pt`
+đều là lịch sử — pipeline nhiều model đó đã bỏ từ tháng 5/2026.
 
-Theo dataset `itemdetection.yolov8`:
-- 14 pieces (kebab-case): `black-advisor`, `black-cannon`, `black-chariot`, `black-elephant`, `black-general`, `black-horse`, `black-soldier`, `red-advisor`, `red-cannon`, `red-chariot`, `red-elephant`, `red-general`, `red-horse`, `red-soldier`
-- 4 landmarks: `board-conner`, `palace-bottom`, `palace-center`, `palace-conner`
+| Model | File | Bản | Ngày |
+|---|---|---|---|
+| Quân + landmark (18 class) | `boarddetection/models/items.pt` (+`.onnx`) | **v20** (YOLO11s @960) | 2026-06-25 |
+| Bàn + cửu cung (segmentation) | `boarddetection/models/board_seg.pt` (+`.onnx`) | **v6_synth500** | 2026-06-26 |
 
-Xem `config/settings.py` - `ITEM_CLASSES` (mới) và `PIECE_CLASSES` (legacy backward compat).
+Backup nằm ở `models/backups/`; `boarddetection/models/` chỉ giữ bản đang chạy.
 
-## Datasets
+## 2. Prod
 
-| Dataset | Số ảnh | Mục đích | Loại label |
-|---------|--------|----------|-----------|
-| `data/items/` | 153 (122/22/9) | Train items.pt | Manual (chính xác) |
-| `data/pieces_merged/` | 1431 train | Train pieces_det.pt | Roboflow original |
-| `data/fendata/` | 99 (52 có FEN) | **Evaluation** | FEN ground truth |
-| `data/prepare/` | 786 (366 có FEN) | Future evaluation/training | FEN ground truth |
+- Chạy trên **portal01** (`103.175.146.124`), container `xqdetection`, **CPU + ONNX**
+  (máy GPU nhà đã bỏ). Public qua Cloudflare tunnel `xqdetection.abcxq.app`.
+- Code **bind-mount** → sửa `.py` chỉ cần ship file + restart, không build lại image.
+  ⚠ Restart `xqdetection` thì **phải restart cả `xqdetection-cloudflared`**, không thì
+  tunnel rớt origin.
+- Nhánh serving: `refactor/single-items-model`.
+- Chi tiết deploy + env + rollback: [`../PROD-DEPLOY.md`](../PROD-DEPLOY.md).
 
-## Vấn đề còn tồn tại
+### Thay đổi mới nhất (2026-09-10, đã deploy)
 
-### 1. Mirror trái-phải (~13% ảnh)
-- **Bản chất**: Bàn cờ Xiangqi đối xứng trái-phải hoàn toàn
-- **Không thể auto-detect** từ vị trí quân (cung tướng đối xứng quanh col 4)
-- **Giải pháp**: User app handle mirror → đã chấp nhận, không fix nữa
+| Việc | Kết quả đo |
+|---|---|
+| `OCR_MIN_CONFIDENCE` 0.35 → **0.25** (khớp ngưỡng đã sweep trên bench) | bench 227→229 (bàn thẳng), 219→221 (bàn lật) |
+| **Lượt đọc thứ hai**: lượt 1 thiếu tướng thì đọc lại bản xoay 180° (`recognize_image_2pass`) | 600 ảnh prod qua cổng **570 (95,0%) → 582 (97,0%)**; lượt 2 chỉ chạy 1,7% request |
+| Tướng nằm ngoài khung thì **snap** về ô hợp lệ chứ không xoá (từ 17/08) | cứu 3/600 ảnh, hỏng 0 |
 
-### 2. Piece detection miss (~30% ảnh)
-- Một số ảnh model thiếu 1-2 quân (thường là Rook đã di chuyển)
-- Cell accuracy 92-96% nhưng FEN không exact match
-- **Giải pháp**: Cần thêm training data (user sẽ cung cấp)
+Rollback không cần build lại: `OCR_TWO_PASS=0` + `OCR_MIN_CONFIDENCE=0.35`.
 
-### 3. Image 001 - hoàn toàn fail
-- Model không detect được quân nào
-- Có thể image quá khác biệt với training data
+## 3. Số đo — và cái bẫy phải nhớ
 
-## Cách Train Model Mới
+**Bench chính**: `test/bench` — **243 ảnh** kèm FEN ground-truth **đã được người audit**
+(lần audit 2026-06-25 phát hiện 9 đáp án GT sai mà model lại đúng).
 
-### Train items.pt (pieces + landmarks)
-```bash
-python scripts/train_items.py \
-    --data data/items/data.yaml \
-    --pretrained yolov8s.pt \
-    --epochs 200 \
-    --batch-size 16 \
-    --device cuda \
-    --seed 42 \
-    --name items_v2
-```
+| Đo trên bench 243 (items v20, conf 0.25, có lượt hai) | Exact FEN |
+|---|---|
+| Ảnh chụp thẳng | **232/243** |
+| Ảnh bàn lật (xoay 180°) | **223/243** |
 
-Model sẽ được lưu vào `models/items.pt` và backup vào `models/items_items_v2.pt`.
+> ⚠ **Số tuyệt đối bị phồng.** Đo dHash thấy **156/243 bàn trong bench trùng với tập
+> train của items_v20**. Đã de-leak tập train (`scripts/deleak.py`, cách ly 307 ảnh) nhưng
+> **v20 được train TRƯỚC khi de-leak** → bench vẫn không phải held-out thật với model này.
+> Dùng bench để **so A/B giữa hai cấu hình** thì vẫn đúng; đừng trích con số này ra ngoài
+> như độ chính xác thật.
+>
+> Bộ held-out sạch: `ingest/2026-07-11/bench_holdout/` (700 ảnh, cân bằng hướng
+> 343 đỏ-dưới / 307 đen-dưới / 50 khó) — **mới nhập GT 60/700**, chưa dùng chấm được.
 
-### Train pieces_det.pt (legacy 14 classes)
-```bash
-python scripts/train_pieces.py \
-    --data data/pieces_merged/data.yaml \
-    --pretrained yolov8s.pt \
-    --epochs 150 \
-    --batch-size 16 \
-    --device cuda
-```
+**Lỗi còn lại là gì** (đo trên bench 243, ảnh chụp thẳng):
 
-## Cách Đánh Giá
+| Loại lỗi | Số ô |
+|---|---|
+| Nhầm LOẠI quân — gần hết là **xe ↔ mã** | 38 (35 là xe/mã) |
+| Sót quân | 28 |
+| Thừa quân | 14 |
+| **Nhầm MÀU đen ↔ đỏ** | **1** |
 
-### Mirror-tolerant evaluation (chuẩn hiện tại)
-```bash
-python scripts/evaluate_fendata.py
-# Hoặc quiet mode (không in failed images):
-python scripts/evaluate_fendata.py --quiet
-```
+⇒ Đừng đầu tư vào "tách màu đen/đỏ", nó không hỏng. Nút thắt là **xe↔mã và sót quân**.
+Tiền xử lý ảnh (tăng bão hoà, CLAHE, imgsz 1280) đã thử: **đều tệ hơn**.
 
-## Kế Hoạch Tiếp Theo
+**Trên ảnh prod thật** (600 ảnh lấy ngẫu nhiên từ kỳ 08): sau thay đổi 10/09, **97,0%**
+qua cổng "có đủ 2 tướng + ≥5 quân" (tức prod trả `detected=true`).
 
-1. **User cung cấp thêm data** tương tự itemdetection (label thủ công, có landmarks)
-2. **Re-train items.pt** với dataset lớn hơn → mAP cao hơn
-3. **Mục tiêu**: 80%+ exact match, 90%+ mirror-tolerant
-4. **Optional**: Thêm param `side=red|black` vào API để loại bỏ hoàn toàn mirror issue
+## 4. Việc đang mở
+
+| Việc | Trạng thái |
+|---|---|
+| **Review nhãn kỳ 2026-07-11** (bộ "chỉ ô nghi ngờ", 252 sheet ≈ 7,4 giờ) | Đang làm dở. Đây là đường chính để hạ lỗi xe↔mã |
+| Train lại items sau khi review xong | Chưa. Lần tới thử **YOLO26**, bắt buộc A/B với YOLO11 trên bench 243 |
+| Nhập FEN GT cho `bench_holdout` 700 ảnh | Mới 60/700 |
+| Sinh dữ liệu rot180 | **Đã bị số liệu bác bỏ là ưu tiên** — xem ROT180_TRAINING_GAP |
+| Đa dạng skin bàn (bàn gỗ quân đỏ không có mực đỏ) | Chưa làm, đây mới là lỗ hổng đáng đầu tư |
+
+## 5. Công cụ hay dùng
+
+| Lệnh | Việc |
+|---|---|
+| `python detect.py --image a.jpg --output out/` | Đọc 1 ảnh / cả thư mục ra FEN |
+| `python scripts/eval_bench.py` | Chấm model trên bench 243 |
+| `python scripts/weekly_ingest.py` | Pseudo-label + dựng gallery review nhãn |
+| `python scripts/second_opinion.py` | Lọc ô đáng ngờ (soi 20% số ô, bắt ~99% lỗi) |
+| `python scripts/video_split.py <video>` | Cắt video dài thành clip từng ván ([doc](VIDEO_SPLIT.md)) |

@@ -633,10 +633,124 @@ def move_source(video, out):
 
 
 # --------------------------------------------------------------------------- #
+def run_one(video, out, args):
+    """Chạy đủ các stage cho MỘT video. Ném exception nếu hỏng (để chạy lô bắt được)."""
+    if not os.path.exists(video):
+        # Chạy lại lần hai: video gốc đã được dời vào trong thư mục rồi.
+        moved = os.path.join(out, f"00_goc_{os.path.basename(video)}")
+        if not os.path.exists(moved):
+            raise FileNotFoundError(f"không thấy video: {video}")
+        video = moved
+        print(f"video gốc đã nằm trong thư mục kết quả -> dùng {moved}")
+    os.makedirs(out, exist_ok=True)
+    stages = args.stage or ["scan", "segment", "cut"]
+    print(f"video : {video}\nout   : {out}\nstage : {', '.join(stages)}\n")
+
+    cache_path = os.path.join(work_dir(out), "scan.json")
+    cache = None
+    if "scan" in stages:
+        cache = stage_scan(video, out, args)
+    elif os.path.exists(cache_path):
+        cache = json.load(open(cache_path, encoding="utf-8"))
+    elif stages != ["cut"]:
+        raise RuntimeError(f"chưa có {cache_path} — chạy --stage scan trước")
+
+    games = None
+    games_path = os.path.join(work_dir(out), "games.json")
+    if "segment" in stages:
+        games = stage_segment(video, out, cache, args)
+    elif os.path.exists(games_path):
+        games = json.load(open(games_path, encoding="utf-8"))
+
+    if "cut" in stages:
+        if not games:
+            raise RuntimeError("chưa có games.json — chạy --stage segment trước")
+        dur = (cache or {}).get("duration") or video_info(video)["duration"]
+        print(f"\n=== cắt (lấy dư {args.lead:.0f}s trước / {args.tail:.0f}s sau) ===")
+        rows = stage_cut(video, out, games, dur, args)
+        if rows and not args.no_move and not args.dry_run:
+            move_source(video, out)
+
+    frames_dir = os.path.join(work_dir(out), "frames")
+    if not args.keep_frames and os.path.isdir(frames_dir) and "cut" in stages:
+        shutil.rmtree(frames_dir, ignore_errors=True)
+        print("đã dọn _data/frames (--keep-frames để giữ)")
+
+
+VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v", ".ts", ".flv", ".webm")
+
+
+def list_videos(folder):
+    """Video ở TẦNG ĐẦU của thư mục, sắp xếp NGẮN TRƯỚC DÀI SAU.
+
+    Ngắn trước vì: xong sớm là có cái để soi, và nếu ngưỡng sai thì phát hiện sau vài
+    phút chứ không phải sau vài giờ. Không đệ quy xuống thư mục con — video đã xử lý
+    nằm trong thư mục con của chính nó, đệ quy vào là cắt lại lần nữa.
+    """
+    files = [os.path.join(folder, n) for n in sorted(os.listdir(folder))
+             if n.lower().endswith(VIDEO_EXT)
+             and os.path.isfile(os.path.join(folder, n))]
+    out = []
+    print(f"đọc độ dài {len(files)} video…", flush=True)
+    for i, p in enumerate(files, 1):
+        try:
+            info = video_info(p)
+            out.append((info["duration"], p, info))
+        except Exception as e:                       # video hỏng thì bỏ qua, đừng chết
+            print(f"  bỏ qua {os.path.basename(p)}: {e}")
+        if i % 50 == 0:
+            print(f"  {i}/{len(files)}", flush=True)
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def run_folder(folder, args):
+    """Chạy lần lượt mọi video trong thư mục, ngắn trước dài sau."""
+    items = list_videos(folder)
+    if not items:
+        sys.exit(f"không có video nào ở tầng đầu của {folder}")
+    total_h = sum(d for d, _, _ in items) / 3600
+    total_gb = sum(os.path.getsize(p) for _, p, _ in items) / 1e9
+    print(f"\n{len(items)} video, tổng {total_h:.1f} giờ, {total_gb:.0f} GB")
+    print(f"lấy dư {args.lead:.0f}s+{args.tail:.0f}s mỗi ván -> clip sẽ CHỒNG LẤN, "
+          f"dung lượng ra ước chừng {total_gb * 1.5:.0f}-{total_gb * 2:.0f} GB")
+    free_gb = shutil.disk_usage(folder).free / 1e9
+    print(f"ổ đĩa còn trống {free_gb:.0f} GB")
+    if free_gb < total_gb * 1.5:
+        print("CẢNH BÁO: có thể không đủ chỗ. Cân nhắc hạ --lead/--tail hoặc chạy từng phần.")
+
+    done, failed, skipped = [], [], []
+    t_all = time.time()
+    for k, (dur, path, _info) in enumerate(items, 1):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        out = os.path.join(os.path.dirname(path), stem)
+        if os.path.exists(os.path.join(out, "index.csv")) and not args.overwrite:
+            print(f"\n[{k}/{len(items)}] BỎ QUA (đã có kết quả): {stem[:70]}")
+            skipped.append(stem)
+            continue
+        print(f"\n{'=' * 78}\n[{k}/{len(items)}] {dur / 60:.0f} phút — {stem[:70]}\n"
+              f"{'=' * 78}", flush=True)
+        t0 = time.time()
+        try:
+            run_one(path, out, args)
+            done.append(stem)
+            print(f"[{k}/{len(items)}] xong sau {(time.time() - t0) / 60:.1f} phút "
+                  f"(tổng {(time.time() - t_all) / 60:.0f} phút)", flush=True)
+        except Exception as e:                       # một video hỏng không được chặn cả lô
+            failed.append((stem, str(e)[:200]))
+            print(f"[{k}/{len(items)}] LỖI: {e}", flush=True)
+
+    print(f"\n{'=' * 78}\nXONG {len(done)} video, bỏ qua {len(skipped)}, "
+          f"lỗi {len(failed)} — tổng {(time.time() - t_all) / 60:.0f} phút")
+    for stem, err in failed:
+        print(f"  LỖI  {stem[:60]}: {err}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("video")
+    ap.add_argument("video", help="file video, HOẶC thư mục -> chạy mọi video trong đó "
+                                  "(ngắn trước dài sau)")
     ap.add_argument("--out", default=None,
                     help="mặc định là thư mục CÙNG CHỖ với video, tên = tên video")
     ap.add_argument("--stage", action="append", choices=["scan", "segment", "cut"],
@@ -695,51 +809,14 @@ def main():
                    help="giữ lại thư mục _data/frames/ sau khi chạy")
     args = ap.parse_args()
 
-    video = os.path.abspath(args.video)
-    stem = os.path.splitext(os.path.basename(video))[0]
+    target = os.path.abspath(args.video)
+    if os.path.isdir(target):
+        run_folder(target, args)
+        return
+    stem = os.path.splitext(os.path.basename(target))[0]
     # Mặc định: thư mục CÙNG CHỖ với video, đặt tên theo video. Video gốc sẽ được
     # dời vào đây luôn nên mỗi video là một thư mục tự chứa đủ mọi thứ.
-    out = args.out or os.path.join(os.path.dirname(video), stem)
-    if not os.path.exists(video):
-        # Chạy lại lần hai: video gốc đã được dời vào trong thư mục rồi.
-        moved = os.path.join(out, f"00_goc_{os.path.basename(video)}")
-        if os.path.exists(moved):
-            video = moved
-            print(f"video gốc đã nằm trong thư mục kết quả -> dùng {moved}")
-        else:
-            sys.exit(f"không thấy video: {video}")
-    os.makedirs(out, exist_ok=True)
-    stages = args.stage or ["scan", "segment", "cut"]
-    print(f"video : {video}\nout   : {out}\nstage : {', '.join(stages)}\n")
-
-    cache_path = os.path.join(work_dir(out), "scan.json")
-    cache = None
-    if "scan" in stages:
-        cache = stage_scan(video, out, args)
-    elif os.path.exists(cache_path):
-        cache = json.load(open(cache_path, encoding="utf-8"))
-    elif stages != ["cut"]:
-        sys.exit(f"chưa có {cache_path} — chạy --stage scan trước")
-
-    games = None
-    if "segment" in stages:
-        games = stage_segment(video, out, cache, args)
-    elif os.path.exists(os.path.join(work_dir(out), "games.json")):
-        games = json.load(open(os.path.join(work_dir(out), "games.json"), encoding="utf-8"))
-
-    if "cut" in stages:
-        if not games:
-            sys.exit("chưa có games.json — chạy --stage segment trước")
-        dur = (cache or {}).get("duration") or video_info(video)["duration"]
-        print(f"\n=== cắt (lấy dư {args.lead:.0f}s trước / {args.tail:.0f}s sau) ===")
-        rows = stage_cut(video, out, games, dur, args)
-        if rows and not args.no_move and not args.dry_run:
-            move_source(video, out)
-
-    frames_dir = os.path.join(work_dir(out), "frames")
-    if not args.keep_frames and os.path.isdir(frames_dir) and "cut" in stages:
-        shutil.rmtree(frames_dir, ignore_errors=True)
-        print(f"đã dọn {os.path.relpath(frames_dir, ROOT)} (--keep-frames để giữ)")
+    run_one(target, args.out or os.path.join(os.path.dirname(target), stem), args)
 
 
 if __name__ == "__main__":

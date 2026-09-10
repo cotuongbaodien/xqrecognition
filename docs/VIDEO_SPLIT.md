@@ -67,7 +67,19 @@ python scripts/video_split.py <video> --stage cut --dry-run
 
 # cắt thật
 python scripts/video_split.py <video> --stage cut
+
+# CẢ THƯ MỤC: chạy mọi video ở tầng đầu, NGẮN TRƯỚC DÀI SAU
+python scripts/video_split.py "E:\videos\GiangHo"
 ```
+
+Chạy cả thư mục:
+- Sắp xếp **ngắn trước dài sau** — xong sớm là có cái để soi, và nếu ngưỡng sai thì
+  biết sau vài phút chứ không phải sau vài giờ.
+- **Không đệ quy** xuống thư mục con: video đã xử lý nằm trong thư mục con của chính
+  nó, đệ quy vào là cắt lại lần nữa.
+- Video đã có `index.csv` thì **bỏ qua** → dừng giữa chừng rồi chạy lại vẫn tiếp được.
+- Một video hỏng **không chặn cả lô**; lỗi gom lại in ở cuối.
+- In trước tổng số giờ, dung lượng ra ước chừng và chỗ trống còn lại; thiếu chỗ thì cảnh báo.
 
 Cần `ffmpeg` + `ffprobe` trong PATH (phụ thuộc ngoài, không phải lib python).
 
