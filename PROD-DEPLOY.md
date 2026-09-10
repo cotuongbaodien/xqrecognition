@@ -63,7 +63,18 @@ Lượt hai CHỈ chạy khi lượt một trượt cổng ⇒ ~98% request gi�
 Khi kết quả đến từ lượt hai, log ghi `rot180=True` và `dataset_saver` lưu **ảnh đã
 xoay** (nếu không, nhãn YOLO lệch 180° so với ảnh và đầu độc vòng retrain).
 
-> ⚠️ Kiểm tra khi ship: bản trên portal01 có `_snap_general` trong
-> `boarddetection/rules_validator.py` chưa (fix 380405b, 17/08 — tướng nằm ngoài khung
-> thì snap chứ không xoá). Bản mirror local `../ocr-gpu-service` **chưa có**; đo lại
-> ngày 2026-09-10: fix cứu 3/600 ảnh, hỏng 0.
+### Nhật ký deploy 2026-09-10 — ĐÃ LÊN PROD
+
+Ship `boarddetection/pipeline.py` + `server.py` (code bind-mount, không rebuild image) →
+`docker restart xqdetection && docker restart xqdetection-cloudflared`. Verify:
+
+- `/health` nội bộ + public `https://xqdetection.abcxq.app/health` → 200
+- ảnh thường: FEN đúng, `rot180=False`, infer 557ms
+- ảnh trước đây bị từ chối: `detected=true`, `rot180=True`, infer 998ms (đúng 2 lượt CPU)
+- backup bản đang chạy trước khi ship: `/root/apps/xqdetection/_backup_prod_2026-09-10/`
+  (toàn bộ `boarddetection/*.py`) → rollback = `cp` ngược lại + restart 2 container
+
+**Đính chính:** fix `_snap_general` (380405b, 17/08) **đã có sẵn trên portal01 từ trước**
+— kiểm tra bằng md5 lúc ship, khớp y hệt bản trong repo. Bản gây hiểu nhầm là mirror local
+`../ocr-gpu-service`: **cây đó CŨ, không phản ánh prod, đừng dùng làm mốc đối chiếu** —
+muốn biết prod đang chạy gì thì md5 thẳng trên portal01.
