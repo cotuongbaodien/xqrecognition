@@ -190,6 +190,16 @@ def main():
     args._dur = 0.0
 
     root = os.path.abspath(args.root)
+    # Dọn file tạm của lần chạy trước bị giết giữa chừng (encode dở, vô dụng).
+    if os.path.isdir(root):
+        n_tmp = 0
+        for dp, _d, fs in os.walk(root):
+            for f in fs:
+                if f.endswith(".shrink.mp4"):
+                    os.remove(os.path.join(dp, f))
+                    n_tmp += 1
+        if n_tmp:
+            print(f"đã dọn {n_tmp} file tạm .shrink.mp4 của lần chạy trước\n")
     files = ([root] if os.path.isfile(root)
              else find_clips(root, args.include_source, args.min_age))
     if args.limit:

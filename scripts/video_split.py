@@ -745,6 +745,14 @@ def stage_cut(video, out, games, duration, args):
             continue
         if os.path.exists(path) and not args.overwrite:
             print(f"  ván {g['i']:2d}  đã có {name} — bỏ qua (--overwrite để ghi đè)")
+            # VẪN ghi vào index.csv: index là danh sách VÁN của video, không phải
+            # nhật ký lần chạy này. Bỏ sót thì lần soát sau báo "thừa clip".
+            rows.append({"van": g["i"], "file": name,
+                         "mo_dau_yeu_cau": round(a, 2), "mo_dau_thuc_te": "",
+                         "ket_thuc": round(b, 2), "dai_giay": round(b - a, 1),
+                         "van_bat_dau": round(g["start"], 2),
+                         "van_ket_thuc": round(g["end"], 2),
+                         "mb": round(os.path.getsize(path) / 1e6, 1)})
             continue
         t0 = time.time()
         r = _run(cmd)
