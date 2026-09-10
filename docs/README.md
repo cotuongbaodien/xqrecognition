@@ -17,6 +17,7 @@ Bắt đầu từ đâu: [`CURRENT_STATUS.md`](CURRENT_STATUS.md) (hệ thống 
 | [`../PROD-DEPLOY.md`](../PROD-DEPLOY.md) | Prod chạy ở đâu, deploy ra sao, env chỉnh chất lượng đọc, cách rollback | 2026-09-10 |
 | [`VIDEO_SPLIT.md`](VIDEO_SPLIT.md) | Cắt video dài thành clip từng ván (`scripts/video_split.py`) | 2026-09-10 |
 | [`VIDEO_BATCH_RUNBOOK.md`](VIDEO_BATCH_RUNBOOK.md) | **Chạy tiếp lô cắt kho `E:/videos/GiangHo`**: lệnh, cách dừng sạch, nén, soát, 3 luật phải nhớ | 2026-09-10 |
+| [`VIDEO_SOURCES.md`](VIDEO_SOURCES.md) | **Danh sách mọi nguồn video + thứ tự làm**: 515 file cục bộ + 1028 video YouTube (713 ẩn), bài toán chỗ chứa, cách lấy cookie | 2026-09-11 |
 | [`ROT180_TRAINING_GAP.md`](ROT180_TRAINING_GAP.md) | Bàn lật ngược: giả thuyết cũ đã bị số liệu bác bỏ, số đo tách hướng, lượt đọc thứ hai | 2026-09-10 |
 | [`INGEST_WORKFLOW.md`](INGEST_WORKFLOW.md) | Ảnh khách gửi → pseudo-label → gallery review → merge → train. **Quy trình chính để cải thiện model** | 2026-08-17 |
 | [`xqdetection-vps-cpu.md`](xqdetection-vps-cpu.md) | Runbook VPS CPU/ONNX: đổi code, đổi model, xem log, chạy ingest tay | 2026-07-11 |
