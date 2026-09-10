@@ -74,6 +74,13 @@ def recognizer():
     return _REC
 
 
+def short(path):
+    """Đường dẫn ngắn để in ra. KHÔNG dùng os.path.relpath: kết quả nằm ở ổ E:
+    còn repo ở ổ C:, relpath khác ổ đĩa là ném ValueError và giết cả lô."""
+    return os.path.join(os.path.basename(os.path.dirname(path)),
+                        os.path.basename(path))
+
+
 def work_dir(out):
     """Thư mục phụ `_data/` — cache, csv, chuỗi FEN, frame tạm.
 
@@ -165,7 +172,10 @@ def decode(video, out_dir, step, start=0.0, dur=None, width=1280, tag="f"):
     if dur:
         cmd += ["-t", f"{dur:.3f}"]
     fps = f"1/{step}" if step >= 1 else f"{1 / step:g}"
-    cmd += ["-vf", f"fps={fps},scale={width}:-2", "-q:v", "3", "-y", pat]
+    # -pix_fmt yuvj420p: video iPhone hay gắn cờ color-range lạ, encoder mjpeg của
+    # ffmpeg 8 từ chối mở ("Non full-range YUV is non-standard") và cả video chết.
+    cmd += ["-vf", f"fps={fps},scale={width}:-2", "-pix_fmt", "yuvj420p",
+            "-q:v", "3", "-y", pat]
     r = _run(cmd)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg decode lỗi: {r.stderr.strip()[:300]}")
@@ -263,7 +273,7 @@ def stage_scan(video, out, args):
         same = (cache.get("params", {}).get("step") == args.step
                 and cache.get("params", {}).get("conf") == args.conf)
         if same:
-            print(f"dùng lại {os.path.relpath(cache_path, ROOT)} "
+            print(f"dùng lại {short(cache_path)} "
                   f"({len(cache['frames'])} frame) — --repredict để chạy lại")
         else:
             print("tham số đổi so với cache -> quét lại")
@@ -326,7 +336,7 @@ def stage_scan(video, out, args):
     cache["fine_done"] = sorted(done)
     json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
     print(f"scan xong: {len(cache['frames'])} mẫu -> "
-          f"{os.path.relpath(cache_path, ROOT)}")
+          f"{short(cache_path)}")
     return cache
 
 
@@ -358,7 +368,7 @@ def find_starts(frames, args):
     hits = [f for f in frames
             if f["n"] >= args.start_pieces and f["d"] <= args.start_dist]
     if not hits:
-        return []
+        return [], []          # phải trả ĐỦ 2 giá trị, video ngắn hay bị rơi vào đây
 
     clusters = [[hits[0]]]
     for f in hits[1:]:
@@ -474,6 +484,15 @@ def stage_segment(video, out, cache, args):
     frames = cache["frames"]
     starts, rejects = find_starts(frames, args)
     games = build_games(starts, cache["duration"], args)
+
+    # Không thấy mốc ván NÀO và hầu như chẳng frame nào có bàn cờ -> video này
+    # không phải video cờ (hoặc bàn không đọc được). Đừng đẻ ra một bản copy cả
+    # video gắn mác "ván 1".
+    gate_frac = (sum(1 for f in frames if f["gate"]) / len(frames)) if frames else 0.0
+    if not starts and gate_frac < args.min_board_frac:
+        print(f"KHÔNG thấy ván nào và chỉ {gate_frac:.0%} frame có bàn cờ "
+              f"-> bỏ qua video này (không cắt)")
+        games = []
 
     # Bàn đọc ngược đầu (đổi màu đen<->đỏ) lệch ĐÚNG 32 ô so với thế khai cuộc —
     # rơi trọn vào dải 30-40 của "không phải khai cuộc" nên sẽ im lặng trôi qua.
@@ -595,12 +614,15 @@ def stage_cut(video, out, games, duration, args):
                      "ket_thuc": round(b, 2), "dai_giay": round(b - a, 1),
                      "van_bat_dau": round(g["start"], 2),
                      "van_ket_thuc": round(g["end"], 2), "mb": round(size, 1)})
-    if rows:
-        with open(os.path.join(out, "index.csv"), "w", newline="",
-                  encoding="utf-8") as fh:
-            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
-            w.writeheader()
-            w.writerows(rows)
+    # LUÔN ghi index.csv, kể cả không có clip nào — nó là dấu "video này đã xử lý"
+    # để lần chạy lô sau bỏ qua, khỏi quét lại từ đầu.
+    cols = ["van", "file", "mo_dau_yeu_cau", "mo_dau_thuc_te", "ket_thuc",
+            "dai_giay", "van_bat_dau", "van_ket_thuc", "mb"]
+    with open(os.path.join(out, "index.csv"), "w", newline="",
+              encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        w.writerows(rows)
     print(f"\n{len(rows)} clip -> {clips}")
     return rows
 
@@ -663,7 +685,7 @@ def run_one(video, out, args):
         games = json.load(open(games_path, encoding="utf-8"))
 
     if "cut" in stages:
-        if not games:
+        if games is None:
             raise RuntimeError("chưa có games.json — chạy --stage segment trước")
         dur = (cache or {}).get("duration") or video_info(video)["duration"]
         print(f"\n=== cắt (lấy dư {args.lead:.0f}s trước / {args.tail:.0f}s sau) ===")
@@ -790,6 +812,9 @@ def main():
                    help="số mẫu 'ván trước đã tàn' cần thấy trước mốc")
     g.add_argument("--reset-lead", type=float, default=25,
                    help="ván N kết thúc = mốc ván N+1 trừ đi mức này")
+    g.add_argument("--min-board-frac", type=float, default=0.15,
+                   help="không thấy ván nào VÀ tỉ lệ frame có bàn cờ dưới mức này "
+                        "-> coi như không phải video cờ, không cắt")
     g.add_argument("--min-seen", type=int, default=2,
                    help="một FEN phải lặp lại bấy nhiêu mẫu mới được ghi")
 
