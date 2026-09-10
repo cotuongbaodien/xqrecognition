@@ -118,7 +118,10 @@ def shrink_one(path, args):
     info = probe(path)
     if info is None:
         return "loi-doc", 0, 0
-    if info["mbps"] <= args.max_mbps and (info["codec"] or "") == "h264":
+    if info["mbps"] <= args.max_mbps:
+        # Bitrate đã thấp thì BỎ QUA, bất kể codec. Trước đây còn đòi codec==h264 nên
+        # clip nguồn AV1 (~1,5 Mbps, đã rất hiệu quả) bị encode lại sang H.264 — tốn
+        # cả giờ GPU mà chỉ nhỏ đi 2-3%, vì H.264 kém hiệu quả hơn AV1 ở cùng chất.
         return "da-nhe", info["size"], info["size"]
     if info["dur"] <= 0:
         return "hong", info["size"], info["size"]

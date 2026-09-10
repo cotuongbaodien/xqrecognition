@@ -13,6 +13,9 @@ mới. Từ các mốc đó cắt video ra nhiều clip bằng ffmpeg (copy stre
   # sửa ngưỡng rồi tính lại mốc — KHÔNG chạy lại model, tốn ~1 giây
   python scripts/video_split.py <video> --stage segment --start-dist 3 --min-gap 90
 
+  # dừng SẠCH giữa lô: tạo file rỗng `_STOP` trong thư mục -> xong video đang
+  # làm thì thoát (đừng giết ngang, dễ để lại clip ghi dở)
+
   # duyệt ảnh xong thì cắt
   python scripts/video_split.py <video> --stage cut
 
@@ -899,7 +902,14 @@ def run_folder(folder, args):
 
     done, failed, skipped = [], [], []
     t_all = time.time()
+    stop_file = os.path.join(folder, "_STOP")
     for k, (dur, path, _info) in enumerate(items, 1):
+        # Dừng SẠCH giữa lô: tạo file `_STOP` trong thư mục là nó xong video đang
+        # làm rồi thoát, thay vì bị giết ngang (dễ để lại clip ghi dở / cache cụt).
+        if os.path.exists(stop_file):
+            print(f"\nthấy {stop_file} -> dừng sạch sau video vừa xong")
+            os.remove(stop_file)
+            break
         stem = os.path.splitext(os.path.basename(path))[0]
         out = os.path.join(os.path.dirname(path), stem)
         if os.path.exists(os.path.join(out, "index.csv")) and not args.overwrite:
