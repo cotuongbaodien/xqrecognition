@@ -207,7 +207,10 @@ def decode(video, out_dir, step, start=0.0, dur=None, width=1280, tag="f",
     """
     # Mỗi lượt decode một thư mục riêng: nếu dùng chung thư mục thì frame của lượt
     # trước còn nằm đó và chỉ số -> timestamp bị lệch (bug đã dính một lần).
-    out_dir = os.path.join(out_dir, tag)
+    # Kèm PID: lỡ có HAI tiến trình cùng chạy một video (đã dính khi vòng giám sát
+    # khởi động lại chồng lên tiến trình cũ) thì chúng không xoá frame của nhau
+    # giữa chừng — lỗi đó hiện ra dưới dạng "Could not open file ...jpg" rất khó đoán.
+    out_dir = os.path.join(out_dir, f"{tag}_p{os.getpid()}")
     shutil.rmtree(out_dir, ignore_errors=True)
     os.makedirs(out_dir, exist_ok=True)
     pat = os.path.join(out_dir, "%06d.jpg")
@@ -386,7 +389,7 @@ def stage_scan(video, out, args):
             done_chunks.add(round(a, 1))
             cache["chunks_done"] = sorted(done_chunks)
             save_json(cache, cache_path)
-            shutil.rmtree(os.path.join(frames_dir, f"c{int(a):07d}"),
+            shutil.rmtree(os.path.join(frames_dir, f"c{int(a):07d}_p{os.getpid()}"),
                           ignore_errors=True)
             print(f"  khúc {ci}/{len(todo)} ({hhmmss(a)}-{hhmmss(a + d)}): "
                   f"{len(fr)} frame / {time.time() - t0:.0f}s", flush=True)
