@@ -67,6 +67,16 @@ python detect.py --image board.jpg --output output/
 python detect.py --dir test/ --output test/output/ --confidence 0.3
 ```
 
+### Cắt video thành từng ván
+
+```bash
+# video dài nhiều ván -> tìm mốc từng ván -> cắt clip + chuỗi FEN theo thời gian
+python scripts/video_split.py "E:\videos\GiangHo\ten video.mp4"
+```
+
+Bàn vừa xếp lại về thế khai cuộc = mốc ván mới. Chi tiết, ngưỡng và giới hạn:
+[`docs/VIDEO_SPLIT.md`](docs/VIDEO_SPLIT.md).
+
 ### Python API
 
 ```python
