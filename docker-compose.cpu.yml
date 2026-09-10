@@ -29,6 +29,12 @@ services:
       - OCR_MODEL_FORMAT=onnx
       # Số luồng onnxruntime (để trống = onnxruntime tự quyết theo #core VPS).
       - OCR_ONNX_THREADS=${OCR_ONNX_THREADS:-}
+      # Ngưỡng conf quân cờ. Mặc định code = 0.25 (ngưỡng đã sweep trên bench).
+      # Đặt 0.35 ở .env là quay lại đúng hành vi trước 2026-09-10.
+      - OCR_MIN_CONFIDENCE=${OCR_MIN_CONFIDENCE:-}
+      # Đọc lượt hai (ảnh xoay 180°) khi lượt một thiếu tướng. 0 = tắt, quay
+      # lại 1 lượt ngay mà không cần build lại image (chỉ restart container).
+      - OCR_TWO_PASS=${OCR_TWO_PASS:-1}
       # PHẢI khớp OCR_SHARED_SECRET bên portal .env.production (X-OCR-Secret / token).
       - OCR_SHARED_SECRET=${OCR_SHARED_SECRET:-}
       # Ingest ngầm (Flow B): URL portal nhận ảnh để lưu R2 + ocr_logs. Trống = tắt.

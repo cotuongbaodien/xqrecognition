@@ -247,3 +247,44 @@ map lưới, không phải quân ma. `rules_validator.py` nay:
 
 Chỉ sửa hậu xử lý Python, **không đụng weights → không cần export lại ONNX**; deploy chỉ
 cần ship `boarddetection/rules_validator.py` + restart container.
+
+---
+
+## Đo 2026-09-10 — chấm TÁCH HƯỚNG trên bench có GT, và fix code-only đã bật
+
+Việc còn treo ở §Đính chính ("nhập FEN GT xong, chấm tách hướng") nay làm được bằng
+chính `test/bench` (243 ảnh, GT người xác nhận): xoay 180° từng ảnh rồi chấm lại.
+
+| | bench chụp thẳng | bench xoay 180° (đen ở dưới) |
+|---|---|---|
+| exact FEN (items v20, conf 0.25) | **229/243** | **221/243** |
+| sót quân / thừa quân | 28 / 14 | 46 / 23 |
+| nhầm LOẠI | 38 ô | 54 ô |
+| **nhầm MÀU (đen↔đỏ)** | **1 ô** | **2 ô** |
+
+⇒ Bàn lật đọc kém hơn **8 bàn (3,3 điểm %)** — có thật nhưng không phải vực thẳm, và
+**không phải do màu**: nhầm đen/đỏ gần như bằng 0, gần hết lỗi nhầm loại là **xe↔mã**
+(R↔N, r↔n: 35/38 ô). Trên 600 ảnh prod thật, ô đọc lệch giữa hai chiều: thiếu/thừa
+1261 · khác loại 181 · **khác màu 40 (2,7%)**.
+
+Kiểm chứng lại tầng hướng: **0/600 ảnh prod và 0/243 bench** có FEN hai chiều lệch
+đúng 180° ⇒ vote hướng chưa từng để bàn lật, đúng như kết luận 17/08.
+
+**Tiền xử lý ảnh để "tách màu cho dễ" đều PHẢN TÁC DỤNG** (model train trên ảnh thô):
+sat×1,6 = 229/219 · CLAHE = 223/216 (nhầm màu còn tăng 1→7 ô) · imgsz 1280 = 224/220,
+so với gốc 229/221.
+
+### Đã bật ở prod (code-only, không đụng weights)
+`pipeline.py::recognize_image_2pass` — lượt một trượt cổng thiếu-tướng thì đọc lại bản
+xoay 180°, lấy kết quả đó nếu qua cổng (`server.py`, env `OCR_TWO_PASS=0` để tắt), kèm
+`OCR_MIN_CONFIDENCE` 0.35 → **0.25**:
+
+| | trước | sau |
+|---|---|---|
+| 600 ảnh prod qua cổng | 570 (95,0%) | **582 (97,0%)** |
+| bench thẳng / lật | 229 / 221 | **232 / 223** |
+| lượt hai thực sự chạy | — | 1,7% request |
+
+Đây là cách rẻ tiền đưa bàn lật về đúng phân bố model đọc tốt nhất. Nó **không** thay
+việc sinh rot180 khi retrain, nhưng cho thấy phần thưởng của rot180 là ~8 bàn/243 chứ
+không phải "cứu bàn lật khỏi thảm hoạ" — vẫn nên ưu tiên xe↔mã và sót quân trước.

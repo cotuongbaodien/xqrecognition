@@ -50,9 +50,24 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logger.propagate = False
 
+def _env(name: str, default: str) -> str:
+    """Env var, coi CHUỖI RỖNG như chưa đặt. docker-compose truyền
+    `- FOO=${FOO:-}` nên biến không có trong .env vẫn tới đây dưới dạng ""
+    — float("") thì container chết ngay lúc import."""
+    return os.environ.get(name) or default
+
+
 MAX_BYTES = 8 * 1024 * 1024
-MIN_CONFIDENCE = float(os.environ.get("OCR_MIN_CONFIDENCE", "0.35"))
-MIN_PIECES = int(os.environ.get("OCR_MIN_PIECES", "5"))
+# 0.25 = ngưỡng đã sweep trên bench (settings.PIECE_CONFIDENCE_THRESHOLD).
+# Server trước đây để 0.35 và lệch khỏi ngưỡng đó; đo lại 2026-09-10:
+# bench 227→229 (bàn thẳng), 219→221 (bàn lật), 600 ảnh prod qua cổng 570→572.
+# Muốn quay lại ngay mà không build lại: đặt env OCR_MIN_CONFIDENCE=0.35.
+MIN_CONFIDENCE = float(_env("OCR_MIN_CONFIDENCE", "0.25"))
+MIN_PIECES = int(_env("OCR_MIN_PIECES", "5"))
+# Đọc lượt hai (bản xoay 180°) khi lượt một trượt cổng thiếu-tướng. Đo trên
+# 600 ảnh prod: từ chối 30 (5,0%) → 20 (3,3%); chỉ ~5% request phải trả thêm
+# một lượt inference. Tắt khẩn cấp bằng env OCR_TWO_PASS=0 (khỏi build lại).
+TWO_PASS = _env("OCR_TWO_PASS", "1").lower() not in ("0", "false", "no")
 # Optional shared-secret. Nếu set, mọi request /detect phải gửi đúng header
 # X-OCR-Secret. Bỏ trống = không check (backward-compatible cho localhost).
 OCR_SHARED_SECRET = os.environ.get("OCR_SHARED_SECRET", "")
@@ -60,12 +75,12 @@ OCR_SHARED_SECRET = os.environ.get("OCR_SHARED_SECRET", "")
 # scripts/weekly_ingest.py + apply_review.py).
 # DIR rỗng = tắt. MODE: "all" lưu mọi ảnh, "failed" chỉ lưu ảnh detected=false.
 DATASET_DIR = os.environ.get("OCR_DATASET_DIR", "")
-DATASET_MODE = os.environ.get("OCR_DATASET_MODE", "all").lower()
+DATASET_MODE = _env("OCR_DATASET_MODE", "all").lower()
 # Ingest NGẦM (Flow B): sau khi trả FEN, POST ảnh+kết quả về portal để lưu R2 +
 # ocr_logs (gom data train). Bỏ trống = tắt. URL là env nên dời server OCR sau này
 # chỉ cần đổi sang URL public portal. Auth = X-OCR-Secret (giống Flow A relay).
 OCR_INGEST_URL = os.environ.get("OCR_INGEST_URL", "")
-OCR_MODEL_VERSION = os.environ.get("OCR_MODEL_VERSION", "yolo11-onnx")
+OCR_MODEL_VERSION = _env("OCR_MODEL_VERSION", "yolo11-onnx")
 
 
 def _ingest(raw: bytes, content_type: str, fields: dict) -> None:
@@ -102,7 +117,7 @@ def _ingest(raw: bytes, content_type: str, fields: dict) -> None:
 
 # Archive Flow B kiểu QUEUE: /detect ghi ảnh + meta ra đĩa (luôn thành công, tách
 # khỏi request). Cron đêm đẩy queue → portal /api/ocr/ingest (R2 + ocr_logs) rồi XOÁ.
-OCR_QUEUE_DIR = os.environ.get("OCR_QUEUE_DIR", "/app/boarddetection/ingest_queue")
+OCR_QUEUE_DIR = _env("OCR_QUEUE_DIR", "/app/boarddetection/ingest_queue")
 
 
 def _queue_save(raw: bytes, meta: dict) -> None:
@@ -239,7 +254,13 @@ async def detect(
         # Chạy inference trong threadpool: onnxruntime nhả GIL → nhiều request
         # detect song song (không chặn event loop) → hết cảnh request thứ 2 timeout.
         result = await run_in_threadpool(
-            lambda: _recognizer.recognize_image(img, piece_confidence=MIN_CONFIDENCE)
+            lambda: (
+                _recognizer.recognize_image_2pass(
+                    img, piece_confidence=MIN_CONFIDENCE, min_pieces=MIN_PIECES
+                )
+                if TWO_PASS
+                else _recognizer.recognize_image(img, piece_confidence=MIN_CONFIDENCE)
+            )
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("recognize failed")
@@ -269,14 +290,20 @@ async def detect(
             detected = False
 
     logger.info(
-        "detect auth=%s detected=%s conf=%.3f pieces=%d size_kb=%d infer_ms=%d total_ms=%d errors=%s",
-        auth_via, detected, result.confidence, len(result.pieces),
-        len(raw) // 1024, elapsed_ms, int((time.time() - t_req) * 1000), errors,
+        "detect auth=%s detected=%s rot180=%s conf=%.3f pieces=%d size_kb=%d "
+        "infer_ms=%d total_ms=%d errors=%s",
+        auth_via, detected, result.used_rot180, result.confidence,
+        len(result.pieces), len(raw) // 1024, elapsed_ms,
+        int((time.time() - t_req) * 1000), errors,
     )
 
     if DATASET_DIR and (DATASET_MODE != "failed" or not detected):
+        # Nhãn YOLO được ghi từ toạ độ của `result`; khi kết quả đến từ lượt
+        # xoay 180° thì phải lưu ĐÚNG bản ảnh đã xoay, nếu không ảnh và nhãn
+        # lệch nhau 180° và đầu độc vòng retrain.
+        sample_img = cv2.rotate(img, cv2.ROTATE_180) if result.used_rot180 else img
         background_tasks.add_task(
-            save_sample, img, result, Path(DATASET_DIR),
+            save_sample, sample_img, result, Path(DATASET_DIR),
             {
                 "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "detected": detected,

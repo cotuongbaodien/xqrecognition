@@ -24,6 +24,10 @@ services:
     environment:
       # PHẢI khớp OCR_SHARED_SECRET bên portal .env.production (header X-OCR-Secret).
       - OCR_SHARED_SECRET=${OCR_SHARED_SECRET:-}
+      # Ngưỡng conf quân cờ (trống = 0.25 theo code) + lượt đọc thứ hai khi
+      # thiếu tướng (OCR_TWO_PASS=0 để tắt). Xem docker-compose.cpu.yml.
+      - OCR_MIN_CONFIDENCE=${OCR_MIN_CONFIDENCE:-}
+      - OCR_TWO_PASS=${OCR_TWO_PASS:-1}
       # Auto-label dataset tuần (giữ như cũ).
       - OCR_DATASET_DIR=/app/boarddetection/dataset
       - OCR_DATASET_MODE=${OCR_DATASET_MODE:-all}

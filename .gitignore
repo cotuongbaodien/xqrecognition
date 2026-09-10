@@ -66,3 +66,6 @@ Thumbs.db
 /xqrecognition_v*.zip
 /weekly/
 /ingest/
+
+# Backup bản prod trước khi đổi (chỉ giữ local, code đã có git tag)
+/backups/**

@@ -40,6 +40,11 @@ class RecognitionResult:
     # Raw detector output (pre-NMS pieces + all landmarks, original image
     # coords) — needed by dataset_saver to write full 18-class YOLO labels.
     item_result: Optional[ItemDetectionResult] = None
+    # True when this result came from the rot180 retry (see
+    # recognize_image_2pass). EVERY coordinate below — pieces, grid,
+    # item_result — is then in the ROTATED image frame, so anything writing
+    # labels against the original pixels must rotate the image first.
+    used_rot180: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
@@ -54,6 +59,7 @@ class RecognitionResult:
             "image_shape": self.image_shape,
             "confidence": self.confidence,
             "errors": self.errors,
+            "used_rot180": self.used_rot180,
         }
 
 
@@ -292,6 +298,59 @@ class XiangqiRecognizer:
             errors=errors,
             item_result=item_result,
         )
+
+    @staticmethod
+    def passes_gate(result: "RecognitionResult", min_pieces: int = 5) -> bool:
+        """Cổng ĐÚNG BẰNG cổng của server.py: FEN phải có đủ hai tướng và đủ
+        số quân tối thiểu. Thiếu tướng thì app tính chiếu sai (sự cố
+        2026-06-12) nên server ép detected=False — dùng chung một tiêu chí ở
+        đây để lượt đọc thứ hai chỉ chạy đúng những ảnh sắp bị từ chối."""
+        board_fen = (result.fen or "").split(" ")[0]
+        return (
+            "K" in board_fen
+            and "k" in board_fen
+            and len(result.pieces) >= min_pieces
+        )
+
+    def recognize_image_2pass(
+        self,
+        image: np.ndarray,
+        piece_confidence: float = PIECE_CONFIDENCE_THRESHOLD,
+        min_pieces: int = 5,
+        visualize: bool = False,
+        **kwargs,
+    ) -> RecognitionResult:
+        """Đọc ảnh; nếu trượt cổng thì đọc lại BẢN XOAY 180° và lấy kết quả đó
+        khi nó qua cổng.
+
+        Vì sao có tác dụng: tầng chuẩn hoá hướng không bao giờ để bàn lật
+        (0/600 ảnh prod và 0/243 bench đo 2026-09-10), nhưng chính DETECTOR
+        đọc bàn lật kém hơn — bench có GT: 229/243 khi chụp thẳng so với
+        221/243 khi bàn lật. Xoay ảnh rồi đọc lại là đưa bàn về đúng phân bố
+        mà model đọc tốt nhất, không phải sửa hướng.
+
+        Đo trên 600 ảnh prod thật: số ảnh bị từ chối 30 (5,0%) → 20 (3,3%).
+        Lượt hai CHỈ chạy khi lượt một trượt cổng nên ~95% request giữ nguyên
+        độ trễ cũ. FEN đã được chuẩn hoá hướng nên trả thẳng ra được; nhưng
+        MỌI toạ độ trong kết quả nằm ở khung ảnh đã xoay — xem `used_rot180`.
+        """
+        first = self.recognize_image(
+            image, piece_confidence=piece_confidence, visualize=visualize, **kwargs
+        )
+        if self.passes_gate(first, min_pieces):
+            return first
+
+        second = self.recognize_image(
+            cv2.rotate(image, cv2.ROTATE_180),
+            piece_confidence=piece_confidence,
+            visualize=visualize,
+            **kwargs,
+        )
+        if self.passes_gate(second, min_pieces):
+            second.used_rot180 = True
+            return second
+        # Cả hai chiều đều trượt — trả lượt đầu để lỗi báo về đúng ảnh gốc.
+        return first
 
     @staticmethod
     def _snap_quad_to_corners(quad, board_corners, threshold=50.0):
