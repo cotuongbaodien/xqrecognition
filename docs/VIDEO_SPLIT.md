@@ -128,6 +128,18 @@ cut      ffmpeg -c copy    (vài giây cho cả video)
 
 - **Decode bằng MỘT tiến trình ffmpeg** (`-vf fps=1/20`). Cả video 1 giờ mất **28 s**.
   Tuyệt đối không `-ss` từng mốc: mỗi seek ~0,5-1 s, chậm gấp hàng trăm lần.
+- **Chia khúc `--chunk` (mặc định 30 phút)**, ghi cache sau MỖI khúc. Video 9 tiếng
+  chết giữa chừng thì chạy lại tiếp từ khúc dở, không mất phần đã làm; và nhìn thấy
+  tiến độ thay vì im lặng 20 phút.
+- **Chỉ decode keyframe** (`-skip_frame nokey`) khi keyframe dày hơn bước lấy mẫu ít
+  nhất 8 lần. Video iPhone có keyframe mỗi ~0,93 s nên bật được: đo riêng phần decode
+  **23,8 s -> 11,2 s cho 10 phút nội dung (2,1x)**, mốc ván ra **y hệt** (kiểm trên
+  `hienscb2601`: 4 ván, cùng từng giây).
+
+  > ⚠ Ngưỡng này phải CHẶT. Thử nới lên `keyframe <= step/2` (video keyframe 6 s,
+  > bước 20 s) thì lưới mẫu xê dịch vài giây và **mất hẳn một ván** (6 -> 5 trên video
+  > mẫu): cửa sổ "bàn còn giống thế khai cuộc" chỉ vài chục giây, lệch một chút là
+  > không mẫu nào rơi trúng.
 - **Detect** bằng `recognize_image_2pass(conf=0.25)` — đúng đường prod, gồm cả lượt
   đọc lại bản xoay 180°. 181 frame mất **16 s** trên GPU (~40 s CPU/ONNX).
 - **Quét tinh**: mỗi ứng viên mở một cửa sổ `[t-60s, t+30s]` quét lại ở 1 fps để chốt
@@ -152,6 +164,13 @@ cut      ffmpeg -c copy    (vài giây cho cả video)
 
 **Kết thúc ván N** = mốc ván N+1 trừ `--reset-lead` (25 s); ván cuối kéo tới hết video.
 Không đi dò "bàn bị dọn" vì pha đó là đoạn nhiễu nhất — mốc ván sau đã đủ để suy ra.
+
+**Lưới an toàn "một ván tối đa `--max-game` phút" (mặc định 25).** Khoảng trống giữa
+hai mốc dài hơn thế gần như chắc chắn là BỎ SÓT một mốc chứ không phải một ván dài
+thật, nên khoảng đó được quét lại dày `--gap-step` (8 s/frame) rồi tính lại mốc — rẻ
+hơn nhiều so với quét dày cả video. Đây chỉ là lưới, không phải bảo đảm: hai ván ngắn
+bị dính làm một vẫn có thể dưới 25 phút và lọt lưới. Hạ `--max-game` xuống ~20 thì bắt
+được nhiều hơn, đổi lại quét thêm ở cả những ván dài thật.
 
 ### 3.3 `cut`
 

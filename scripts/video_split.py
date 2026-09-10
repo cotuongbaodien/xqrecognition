@@ -151,7 +151,31 @@ def keyframe_before(video, t):
     return best
 
 
-def decode(video, out_dir, step, start=0.0, dur=None, width=1280, tag="f"):
+def keyframe_gap(video, at=600.0, window=60.0):
+    """Khoảng cách trung vị giữa các keyframe (giây), đo trên một cửa sổ ngắn.
+
+    Dùng để quyết định có dám decode CHỈ keyframe hay không: keyframe dày hơn nhiều
+    so với bước lấy mẫu thì bỏ qua khung hình giữa không mất gì, mà nhanh gấp đôi.
+    """
+    r = _run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+              "-read_intervals", f"{at:.0f}%+{window:.0f}",
+              "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", video])
+    ks = []
+    for line in r.stdout.splitlines():
+        parts = line.split(",")
+        if len(parts) >= 2 and "K" in parts[1]:
+            try:
+                ks.append(float(parts[0]))
+            except ValueError:
+                pass
+    if len(ks) < 3:
+        return None
+    gaps = [b - a for a, b in zip(ks, ks[1:]) if b > a]
+    return float(np.median(gaps)) if gaps else None
+
+
+def decode(video, out_dir, step, start=0.0, dur=None, width=1280, tag="f",
+           keyframe_only=False):
     """Trích frame bằng MỘT tiến trình ffmpeg (decode tuần tự).
 
     Đừng thay bằng `-ss` từng mốc: seek một lần ~0,5-1 s, còn decode cả video 1h
@@ -166,6 +190,11 @@ def decode(video, out_dir, step, start=0.0, dur=None, width=1280, tag="f"):
     os.makedirs(out_dir, exist_ok=True)
     pat = os.path.join(out_dir, "%06d.jpg")
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+    if keyframe_only:
+        # Bỏ hẳn việc dựng lại khung hình giữa hai keyframe. Đo trên HEVC iPhone:
+        # 10 phút nội dung 23,8 s -> 11,2 s (nhanh 2,1x). Chỉ bật khi keyframe dày
+        # hơn bước lấy mẫu nhiều lần, nếu không lưới mẫu sẽ thưa và lệch.
+        cmd += ["-skip_frame", "nokey"]
     if start:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", video]
@@ -287,26 +316,58 @@ def stage_scan(video, out, args):
     rec = recognizer()
     frames_dir = os.path.join(work_dir(out), "frames")
 
-    # --- quét thô ---
-    if not cache["frames"]:
-        t0 = time.time()
-        coarse = decode(video, frames_dir, args.step, width=args.width, tag="c")
-        print(f"decode thô: {len(coarse)} frame / {time.time() - t0:.0f}s")
+    # --- quét thô, CHIA TỪNG KHÚC ---
+    # Chia khúc để: (a) video 9 tiếng chết giữa chừng thì chạy lại không mất phần đã
+    # làm — cache ghi sau MỖI khúc; (b) thấy tiến độ thay vì im lặng 20 phút.
+    dur_total = info["duration"]
+    chunk = max(60.0, args.chunk * 60.0)
+    chunks = [(a, min(chunk, dur_total - a))
+              for a in np.arange(0.0, dur_total, chunk)]
+    done_chunks = {round(c, 1) for c in cache.get("chunks_done", [])}
+    todo = [(a, d) for a, d in chunks if round(a, 1) not in done_chunks and d > 1]
 
-        roi, frac = (None, 0.0)
-        if not args.no_roi:
-            roi, frac = board_roi(rec, [p for _, p in coarse], sample=args.roi_sample)
-            if roi and frac >= args.roi_min_frac:
-                print(f"bàn chiếm {frac:.0%} chiều cao -> KHÔNG crop (đủ to)")
-                roi = None
-            elif roi:
-                print(f"bàn chỉ chiếm {frac:.0%} chiều cao -> crop ROI {roi}")
-            else:
-                print("không chốt được ROI (seg trả None) -> dùng full-frame")
-        cache["params"]["roi"] = list(roi) if roi else None
-        cache["params"]["board_frac"] = round(frac, 3)
-        merge_frames(cache, detect_frames(rec, coarse, args.conf, roi, " thô"))
-        json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
+    if todo:
+        kf = keyframe_gap(video, at=min(600.0, dur_total / 3))
+        # Chỉ dám bỏ khung hình giữa khi keyframe dày hơn hẳn bước lấy mẫu, nếu không
+        # lưới mẫu bị thưa và lệch so với mốc mong muốn.
+        # Ngưỡng PHẢI chặt. Thử nới lên step/2 (keyframe 6s, bước 20s) thì lưới mẫu
+        # thô xê dịch vài giây và **mất hẳn một ván** trên video mẫu (6 -> 5 ván):
+        # cửa sổ "bàn còn giống khai cuộc" chỉ kéo dài vài chục giây, lệch một chút
+        # là không frame nào rơi vào. Chỉ bật khi keyframe dày hơn bước lấy mẫu ÍT
+        # NHẤT 8 lần (video iPhone: 0,93s so với bước 20s) -> xê dịch dưới 1 giây.
+        kf_max = args.kf_max if args.kf_max > 0 else args.step / 8
+        key_only = kf is not None and kf <= kf_max
+        print(f"keyframe mỗi ~{kf:.1f}s -> "
+              f"{'CHỈ decode keyframe (nhanh ~2x)' if key_only else 'decode đầy đủ'}"
+              if kf else "không đo được keyframe -> decode đầy đủ")
+        cache["params"]["keyframe_only"] = bool(key_only)
+
+        roi = tuple(cache["params"]["roi"]) if cache["params"].get("roi") else None
+        for ci, (a, d) in enumerate(todo, 1):
+            t0 = time.time()
+            fr = decode(video, frames_dir, args.step, start=a, dur=d,
+                        width=args.width, tag=f"c{int(a):07d}", keyframe_only=key_only)
+            # ROI chốt một lần từ khúc đầu tiên có bàn cờ.
+            if not args.no_roi and cache["params"].get("roi_done") is not True:
+                roi, frac = board_roi(rec, [p for _, p in fr], sample=args.roi_sample)
+                if roi and frac >= args.roi_min_frac:
+                    print(f"bàn chiếm {frac:.0%} chiều cao -> KHÔNG crop (đủ to)")
+                    roi = None
+                elif roi:
+                    print(f"bàn chỉ chiếm {frac:.0%} chiều cao -> crop ROI {roi}")
+                else:
+                    print("không chốt được ROI (seg trả None) -> dùng full-frame")
+                cache["params"]["roi"] = list(roi) if roi else None
+                cache["params"]["board_frac"] = round(frac, 3)
+                cache["params"]["roi_done"] = True
+            merge_frames(cache, detect_frames(rec, fr, args.conf, roi, ""))
+            done_chunks.add(round(a, 1))
+            cache["chunks_done"] = sorted(done_chunks)
+            json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
+            shutil.rmtree(os.path.join(frames_dir, f"c{int(a):07d}"),
+                          ignore_errors=True)
+            print(f"  khúc {ci}/{len(todo)} ({hhmmss(a)}-{hhmmss(a + d)}): "
+                  f"{len(fr)} frame / {time.time() - t0:.0f}s", flush=True)
 
     roi = tuple(cache["params"]["roi"]) if cache["params"].get("roi") else None
 
@@ -346,12 +407,14 @@ def scan_spans(video, out, cache, spans, step, conf, label="dày"):
         return cache
     rec = recognizer()
     roi = tuple(cache["params"]["roi"]) if cache["params"].get("roi") else None
+    key_only = bool(cache["params"].get("keyframe_only"))
     frames_dir = os.path.join(work_dir(out), "frames")
     for k, (a, b) in enumerate(spans, 1):
         have = [f["t"] for f in cache["frames"] if a <= f["t"] <= b]
         if len(have) >= (b - a) / step * 0.9:      # đã có sẵn mẫu đủ dày
             continue
-        fr = decode(video, frames_dir, step, start=a, dur=b - a, tag=f"d{k:02d}")
+        fr = decode(video, frames_dir, step, start=a, dur=b - a, tag=f"d{k:02d}",
+                    keyframe_only=key_only and step >= 4)
         merge_frames(cache, detect_frames(rec, fr, conf, roi,
                                           f" {label} {k}/{len(spans)}"))
     json.dump(cache, open(os.path.join(work_dir(out), "scan.json"), "w", encoding="utf-8"),
@@ -493,6 +556,26 @@ def stage_segment(video, out, cache, args):
         print(f"KHÔNG thấy ván nào và chỉ {gate_frac:.0%} frame có bàn cờ "
               f"-> bỏ qua video này (không cắt)")
         games = []
+
+    # "Một ván cờ tối đa ~25 phút": khoảng trống dài hơn thế gần như chắc chắn là
+    # BỎ SÓT một mốc chứ không phải một ván dài thật. Quét riêng khoảng đó dày hơn
+    # rồi tính lại — rẻ hơn nhiều so với quét dày cả video.
+    if args.max_game > 0 and args.gap_step > 0:
+        bounds = [0.0] + [s["t"] for s in starts] + [cache["duration"]]
+        gaps = [(bounds[i], bounds[i + 1]) for i in range(len(bounds) - 1)
+                if bounds[i + 1] - bounds[i] > args.max_game * 60]
+        if gaps:
+            tot = sum(b - a for a, b in gaps) / 60
+            print(f"{len(gaps)} khoảng dài hơn {args.max_game:.0f} phút "
+                  f"(tổng {tot:.0f} phút) -> quét lại dày {args.gap_step:.0f}s/frame "
+                  f"để tìm mốc bỏ sót", flush=True)
+            cache = scan_spans(video, out, cache, gaps, args.gap_step, args.conf,
+                               "kẽ hở")
+            frames = cache["frames"]
+            n_before = len(starts)
+            starts, rejects = find_starts(frames, args)
+            print(f"  -> {len(starts) - n_before:+d} mốc so với trước")
+            games = build_games(starts, cache["duration"], args)
 
     # Bàn đọc ngược đầu (đổi màu đen<->đỏ) lệch ĐÚNG 32 ô so với thế khai cuộc —
     # rơi trọn vào dải 30-40 của "không phải khai cuộc" nên sẽ im lặng trôi qua.
@@ -812,6 +895,17 @@ def main():
                    help="số mẫu 'ván trước đã tàn' cần thấy trước mốc")
     g.add_argument("--reset-lead", type=float, default=25,
                    help="ván N kết thúc = mốc ván N+1 trừ đi mức này")
+    g.add_argument("--kf-max", type=float, default=0,
+                   help="chỉ decode keyframe khi khoảng cách keyframe <= mức này "
+                        "(giây). 0 = tự tính = --step/8")
+    g.add_argument("--chunk", type=float, default=30,
+                   help="quét thô theo từng khúc bao nhiêu PHÚT (ghi cache sau mỗi "
+                        "khúc -> video dài chết giữa chừng vẫn chạy tiếp được)")
+    g.add_argument("--max-game", type=float, default=25,
+                   help="một ván tối đa bao nhiêu phút; khoảng trống dài hơn thế bị "
+                        "coi là BỎ SÓT mốc và được quét lại dày hơn (0 = tắt)")
+    g.add_argument("--gap-step", type=float, default=8,
+                   help="giây/frame khi quét lại các khoảng nghi bỏ sót mốc")
     g.add_argument("--min-board-frac", type=float, default=0.15,
                    help="không thấy ván nào VÀ tỉ lệ frame có bàn cờ dưới mức này "
                         "-> coi như không phải video cờ, không cắt")
