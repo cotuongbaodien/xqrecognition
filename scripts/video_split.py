@@ -394,6 +394,10 @@ def stage_scan(video, out, args):
         merge_frames(cache, detect_frames(rec, fine, args.conf, roi,
                                           f" tinh {k}/{len(windows)}"))
         done.add(round(lo, 1))
+        # Ghi cache sau MỖI cửa sổ (không phải cuối vòng): tiến trình chết giữa
+        # chừng thì lần sau khỏi quét lại mấy chục cửa sổ đã làm.
+        cache["fine_done"] = sorted(done)
+        json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
     cache["fine_done"] = sorted(done)
     json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
     print(f"scan xong: {len(cache['frames'])} mẫu -> "
@@ -642,6 +646,20 @@ def stage_segment(video, out, cache, args):
 # --------------------------------------------------------------------------- #
 # stage 3: cut
 # --------------------------------------------------------------------------- #
+def source_mbps(video):
+    """Bitrate tổng của video nguồn (Mbps), 0 nếu không đọc được."""
+    r = _run(["ffprobe", "-v", "error", "-show_entries", "format=bit_rate,duration,size",
+              "-of", "json", video])
+    try:
+        fm = json.loads(r.stdout or "{}").get("format", {})
+        br = float(fm.get("bit_rate") or 0)
+        if not br:
+            br = int(fm.get("size", 0)) * 8 / max(float(fm.get("duration", 1)), 1)
+        return br / 1e6
+    except Exception:
+        return 0.0
+
+
 def clip_name(stem, i, start_hms, ext):
     """`<tên video>_van01_00-19-17.mp4` — mang theo tên video để clip tách khỏi
     thư mục vẫn biết là của video nào. Cắt bớt tên dài cho khỏi vượt giới hạn
@@ -659,22 +677,47 @@ def stage_cut(video, out, games, duration, args):
     stem = os.path.splitext(os.path.basename(video))[0]
     if stem.startswith("00_goc_"):          # video gốc đã được dời vào từ lần trước
         stem = stem[len("00_goc_"):]
+
+    # Copy stream hay encode lại? Nguồn nhẹ (mp4 ~1,3 Mbps) thì copy là tối ưu: tức
+    # thì, không mất chất. Nguồn nặng (MOV iPhone HEVC 5-6 Mbps) thì encode NGAY LÚC
+    # CẮT tốt hơn hẳn "copy rồi nén sau": chỉ ghi đĩa MỘT lần bản nhẹ, thay vì ghi bản
+    # nặng rồi đọc lại + ghi bản nhẹ + xoá bản nặng (gấp ~4 lần lượt ghi trên ổ cơ).
+    # Đổi lại: chậm hơn (encode ~13,8x thời gian thực) nhưng cắt ĐÚNG TỪNG FRAME,
+    # không bị kéo về keyframe.
+    src_mbps = source_mbps(video)
+    encode = (args.reencode == "always"
+              or (args.reencode == "auto" and src_mbps > args.reencode_above))
+    print(f"nguồn {src_mbps:.1f} Mbps -> "
+          f"{'ENCODE lại khi cắt (ra clip nhẹ luôn)' if encode else 'copy stream'}")
     rows = []
     for g in games:
         a = max(0.0, g["start"] - args.lead)
         b = min(duration, g["end"] + args.tail)
-        ext = os.path.splitext(video)[1] or ".mp4"
+        ext = ".mp4" if encode else (os.path.splitext(video)[1] or ".mp4")
         name = clip_name(stem, g["i"], g["start_hms"], ext)
         path = os.path.join(clips, name)
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-               # -ss TRƯỚC -i: seek theo index, không decode; với -c copy ffmpeg
-               # lùi về keyframe gần nhất nên chỉ dư ở đầu, không bao giờ cụt.
-               "-ss", f"{a:.3f}", "-i", video, "-t", f"{b - a:.3f}",
-               # -map 0 kéo theo cả stream dữ liệu mp4 không copy được -> chỉ lấy
-               # video + audio (dấu ? = không có audio cũng không sao).
-               "-map", "0:v:0", "-map", "0:a?", "-map_metadata", "0",
-               "-c", "copy", "-avoid_negative_ts", "make_zero",
-               "-movflags", "+faststart", "-y", path]
+        if encode:
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                   "-ss", f"{a:.3f}", "-i", video, "-t", f"{b - a:.3f}",
+                   "-map", "0:v:0", "-map", "0:a?",
+                   "-vf", f"scale='min({args.max_width},iw)':-2",
+                   "-c:v", args.encoder, "-preset", "p5", "-tune", "hq",
+                   "-rc", "vbr", "-cq", str(args.cq), "-b:v", "0",
+                   "-maxrate", "3M", "-bufsize", "6M", "-profile:v", "high",
+                   # GOP 2 giây: cắt lại lần nữa về sau vẫn chính xác.
+                   "-g", "60", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-b:a", "96k",
+                   "-movflags", "+faststart", "-y", path]
+        else:
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                   # -ss TRƯỚC -i: seek theo index, không decode; với -c copy ffmpeg
+                   # lùi về keyframe gần nhất nên chỉ dư ở đầu, không bao giờ cụt.
+                   "-ss", f"{a:.3f}", "-i", video, "-t", f"{b - a:.3f}",
+                   # -map 0 kéo cả stream dữ liệu mp4 không copy được -> chỉ lấy
+                   # video + audio (dấu ? = không có audio cũng không sao).
+                   "-map", "0:v:0", "-map", "0:a?", "-map_metadata", "0",
+                   "-c", "copy", "-avoid_negative_ts", "make_zero",
+                   "-movflags", "+faststart", "-y", path]
         if args.dry_run:
             print("  " + subprocess.list2cmdline(cmd))
             continue
@@ -844,6 +887,13 @@ def run_folder(folder, args):
         except Exception as e:                       # một video hỏng không được chặn cả lô
             failed.append((stem, str(e)[:200]))
             print(f"[{k}/{len(items)}] LỖI: {e}", flush=True)
+            if "CUDA" in str(e) or "cuda" in type(e).__name__.lower():
+                # Lỗi CUDA làm HỎNG HẲN context của tiến trình: chạy tiếp thì mọi
+                # video sau đều chết y hệt, cháy sạch danh sách trong vài giây.
+                # Thoát hẳn để vòng lặp bên ngoài khởi động lại tiến trình mới —
+                # video đã xong bị bỏ qua, video dở tiếp tục từ khúc còn dang dở.
+                print("LỖI CUDA -> thoát để chạy lại tiến trình mới", flush=True)
+                raise SystemExit(3)
 
     print(f"\n{'=' * 78}\nXONG {len(done)} video, bỏ qua {len(skipped)}, "
           f"lỗi {len(failed)} — tổng {(time.time() - t_all) / 60:.0f} phút")
@@ -919,6 +969,16 @@ def main():
                    help="lấy dư bao nhiêu giây TRƯỚC ván (mặc định 2 phút)")
     g.add_argument("--tail", type=float, default=120,
                    help="lấy dư bao nhiêu giây SAU ván (mặc định 2 phút)")
+    g.add_argument("--reencode", default="auto", choices=["auto", "always", "never"],
+                   help="auto = nguồn nặng hơn --reencode-above thì encode lại NGAY "
+                        "lúc cắt (ghi đĩa 1 lần bản nhẹ, cắt đúng frame); nguồn nhẹ "
+                        "thì copy stream")
+    g.add_argument("--reencode-above", type=float, default=2.5,
+                   help="Mbps: trên mức này coi là nguồn nặng")
+    g.add_argument("--encoder", default="h264_nvenc",
+                   help="h264_nvenc (GPU) hoặc libx264 (CPU)")
+    g.add_argument("--cq", type=int, default=30, help="chất lượng khi encode lại")
+    g.add_argument("--max-width", type=int, default=1280)
     g.add_argument("--dry-run", action="store_true",
                    help="in lệnh ffmpeg ra chứ không cắt thật")
     g.add_argument("--overwrite", action="store_true",

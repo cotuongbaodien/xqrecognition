@@ -59,13 +59,28 @@ def hhmm(sec):
     return f"{int(sec) // 3600:d}h{int(sec) % 3600 // 60:02d}"
 
 
-def find_clips(root, include_source=False):
-    """Clip ván trong các thư mục con do video_split tạo ra."""
+def find_clips(root, include_source=False, min_age_sec=300):
+    """Clip ván trong các thư mục con do video_split tạo ra.
+
+    An toàn khi chạy SONG SONG với video_split đang cắt:
+      * chỉ nhận thư mục đã có `index.csv` (= video đó cắt xong hẳn);
+      * bỏ file vừa được ghi trong `min_age_sec` giây (đang ghi dở).
+    Nén nhầm file đang ghi thì ra clip cụt mà vẫn "hợp lệ" — không có cách nào biết.
+    """
     out = []
     for dirpath, _dirs, files in os.walk(root):
         if os.path.basename(dirpath) == "_data":
             continue
+        if dirpath != root and "index.csv" not in files:
+            continue                      # video đang cắt dở -> để yên
+        now = time.time()
         for n in sorted(files):
+            fp = os.path.join(dirpath, n)
+            try:
+                if now - os.path.getmtime(fp) < min_age_sec:
+                    continue              # file còn nóng, có thể đang ghi
+            except OSError:
+                continue
             if not n.lower().endswith(VIDEO_EXT):
                 continue
             is_source = n.startswith("00_goc_")
@@ -73,7 +88,7 @@ def find_clips(root, include_source=False):
                 continue
             if not is_source and "_van" not in n:
                 continue        # không phải clip do video_split cắt -> đừng đụng
-            out.append(os.path.join(dirpath, n))
+            out.append(fp)
     return out
 
 
@@ -165,6 +180,9 @@ def main():
                     help="giữ file cũ, ghi bản nhẹ ra tên khác")
     ap.add_argument("--est-mbps", type=float, default=1.5,
                     help="chỉ dùng cho --dry-run: ước lượng bitrate sau khi nén")
+    ap.add_argument("--min-age", type=float, default=300,
+                    help="bỏ qua file vừa ghi trong bấy nhiêu giây (tránh đụng clip "
+                         "mà video_split đang cắt dở)")
     ap.add_argument("--limit", type=int, default=0, help="chỉ làm N file đầu (để thử)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -173,7 +191,7 @@ def main():
 
     root = os.path.abspath(args.root)
     files = ([root] if os.path.isfile(root)
-             else find_clips(root, args.include_source))
+             else find_clips(root, args.include_source, args.min_age))
     if args.limit:
         files = files[:args.limit]
     if not files:
