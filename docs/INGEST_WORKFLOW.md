@@ -77,6 +77,11 @@ folder đó — ô nào sai thì ghi lại `idx`.
 | Vua đen 将 | `13.soaiden` | `soaiden` (hoặc `vua`) | **tượng 象** |
 | Vua đỏ 帥 | `14.soaido` | `soaido` (hoặc `vua`) | **tượng 相** |
 
+> ⚠️ **Đừng suy màu quân từ chữ Hán.** Bảng trên ghi ký tự theo quy ước phổ biến
+> (đen 卒/車/馬, đỏ 兵/俥/傌), nhưng **có bộ cờ cho bên ĐEN dùng luôn chữ của bên đỏ**
+> — gặp thật khi review kỳ 2026-08 (ô 1446, 1512 hiện 兵 nhưng là chốt ĐEN). Màu phải
+> nhìn từ màu mực/màu quân trong ảnh, không phải từ mặt chữ.
+
 ### 4. Correct — áp sửa
 Báo dạng `<idx>=<class> ...`; token class: `xe ma phao si tuong soai/vua tot`
 (màu suy từ folder; ép màu: `ma-do`, `xe-den`). `bo`/`del` = xoá box (sentinel 99).

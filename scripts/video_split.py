@@ -13,11 +13,11 @@ mới. Từ các mốc đó cắt video ra nhiều clip bằng ffmpeg (copy stre
   # sửa ngưỡng rồi tính lại mốc — KHÔNG chạy lại model, tốn ~1 giây
   python scripts/video_split.py <video> --stage segment --start-dist 3 --min-gap 90
 
-  # dừng SẠCH giữa lô: tạo file rỗng `_STOP` trong thư mục -> xong video đang
-  # làm thì thoát (đừng giết ngang, dễ để lại clip ghi dở)
-
   # duyệt ảnh xong thì cắt
   python scripts/video_split.py <video> --stage cut
+
+  # dừng SẠCH giữa lô: tạo file rỗng `_STOP` trong thư mục -> nó cắt xong video
+  # đang làm rồi thoát. Đừng giết ngang: dễ để lại clip ghi dở / cache cụt.
 
 Kết quả nằm NGAY CẠNH video gốc, mỗi video một thư mục tự chứa đủ:
 
