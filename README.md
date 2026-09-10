@@ -74,7 +74,9 @@ python detect.py --dir test/ --output test/output/ --confidence 0.3
 python scripts/video_split.py "E:\videos\GiangHo\ten video.mp4"
 ```
 
-Bàn vừa xếp lại về thế khai cuộc = mốc ván mới. Chi tiết, ngưỡng và giới hạn:
+Bàn vừa xếp lại về thế khai cuộc = mốc ván mới. Kết quả tạo **ngay cạnh video gốc**:
+một thư mục tên theo video, chứa các clip từng ván + `starts.jpg` để soi mốc, và
+video gốc được dời vào thành `00_goc_<tên>.mp4`. Chi tiết, ngưỡng và giới hạn:
 [`docs/VIDEO_SPLIT.md`](docs/VIDEO_SPLIT.md).
 
 ### Python API

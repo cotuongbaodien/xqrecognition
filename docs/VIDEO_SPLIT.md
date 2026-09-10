@@ -71,20 +71,36 @@ python scripts/video_split.py <video> --stage cut
 
 Cần `ffmpeg` + `ffprobe` trong PATH (phụ thuộc ngoài, không phải lib python).
 
-### Thư mục kết quả — `output/video_split/<tên video>/`
+### Thư mục kết quả — nằm NGAY CẠNH video gốc
+
+Mỗi video một thư mục tự chứa đủ, đặt cùng chỗ với video (không phải trong repo):
+
+```
+E:\videos\GiangHo\Nhâm Thầy Cúng vs Nghĩa Sing\
+    00_goc_Nhâm Thầy Cúng vs Nghĩa Sing.mp4     <- VIDEO GỐC, đã được dời vào
+    Nhâm Thầy Cúng vs Nghĩa Sing_van01_00-00-09.mp4
+    Nhâm Thầy Cúng vs Nghĩa Sing_van02_00-11-23.mp4
+    …
+    starts.jpg      <- ảnh mốc từng ván, soi trước khi tin
+    index.csv       <- mốc yêu cầu / mốc thật sau snap / độ dài / dung lượng
+    _data\          <- scan.json, games.json, rejected.json, timeline.csv, fens\
+```
 
 | File | Nội dung |
 |---|---|
-| `scan.json` | tham số + **mọi mẫu đã đọc** (`t`, `fen`, số quân, `d`, `gate`, `conf`). Cache: chạy lại không detect lại |
-| `games.json` | mốc bắt đầu/kết thúc từng ván + thống kê chuỗi FEN |
-| `rejected.json` | ứng viên **bị loại** kèm lý do — để biết vì sao một mốc không được nhận |
-| `timeline.csv` | mỗi mẫu một dòng, mở bằng Excel để tự soi |
+| `00_goc_<tên>.mp4` | video gốc. Tiền tố `00_goc_` để phân biệt hẳn với clip và luôn nằm đầu khi sắp theo tên. `--no-move` nếu muốn để video ở chỗ cũ |
+| `<tên>_vanNN_<hh-mm-ss>.mp4` | clip từng ván; tên mang theo tên video nên tách khỏi thư mục vẫn biết của video nào |
 | `starts.jpg` | **ảnh dán frame lúc bắt đầu mỗi ván** — cổng kiểm tra bằng mắt trước khi cắt |
-| `fens/gNN_fens.jsonl` | chuỗi quan sát FEN theo thời gian của từng ván |
-| `clips/gNN_<hh-mm-ss>.mp4` | clip từng ván |
-| `clips/index.csv` | mốc yêu cầu / mốc thật sau snap / độ dài / dung lượng |
+| `index.csv` | mốc yêu cầu / mốc thật sau snap keyframe / độ dài / dung lượng |
+| `_data/scan.json` | tham số + **mọi mẫu đã đọc** (`t`, `fen`, số quân, `d`, `gate`, `conf`). Cache: chạy lại không detect lại |
+| `_data/games.json` | mốc bắt đầu/kết thúc từng ván + thống kê chuỗi FEN |
+| `_data/rejected.json` | ứng viên **bị loại** kèm lý do — để biết vì sao một mốc không được nhận |
+| `_data/timeline.csv` | mỗi mẫu một dòng, mở bằng Excel để tự soi |
+| `_data/fens/gNN_fens.jsonl` | chuỗi quan sát FEN theo thời gian của từng ván |
 
-`output/` đã nằm trong `.gitignore`.
+Chạy lại lần sau cứ đưa **đường dẫn video cũ** — script tự tìm bản đã dời vào
+(`00_goc_…`) và dùng tiếp. Dời video trong cùng ổ đĩa chỉ là đổi tên nên tức thì;
+khác ổ thì phải copy cả GB và script báo trước. `--out DIR` để tự chọn chỗ khác.
 
 ---
 
@@ -140,6 +156,8 @@ ffmpeg -ss <start> -i <video> -t <dur> -map 0:v:0 -map 0:a? \
 - **Mặc định lấy dư `--lead 300` giây TRƯỚC và `--tail 300` giây SAU mỗi ván** để chắc
   chắn không sót. Hệ quả: các clip **chồng lấn nhau** và tổng dung lượng lớn hơn video
   gốc (video mẫu 0,72 GB → 6 clip tổng 1,3 GB). Muốn gọn thì hạ xuống `--lead 20 --tail 20`.
+- Cắt xong thì **dời luôn video gốc vào thư mục** thành `00_goc_<tên>.<ext>` (`--no-move`
+  để tắt). Chỉ dời khi đã cắt được ít nhất một clip, và không dời khi `--dry-run`.
 - Clip đã tồn tại thì bỏ qua (chạy lại được); `--overwrite` để ghi đè.
 
 ---
@@ -231,8 +249,11 @@ bàn chiếm 42% chiều cao -> KHÔNG crop
 khai cuộc. Đồng hồ trong khung hình có ô đếm ván, tới ván cuối hiện `4 | 2` = 6 ván —
 khớp đúng số ván tìm được.
 
-Cắt 6 clip mất ~5 giây, tổng 1,3 GB (do lấy dư 5 phút mỗi đầu). Mốc thật sau khi
+Cắt 6 clip mất ~5-18 giây, tổng 1,3 GB (do lấy dư 5 phút mỗi đầu). Mốc thật sau khi
 snap keyframe lệch 0-5,4 s so với mốc yêu cầu, **luôn lệch về phía trước**.
+
+Toàn bộ nằm ở `E:\videos\GiangHo\Nhâm Thầy Cúng vs Nghĩa Sing\`, video gốc đã được
+dời vào cùng chỗ thành `00_goc_Nhâm Thầy Cúng vs Nghĩa Sing.mp4`.
 
 ---
 

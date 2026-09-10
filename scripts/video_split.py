@@ -7,7 +7,7 @@ mới. Từ các mốc đó cắt video ra nhiều clip bằng ffmpeg (copy stre
   # chạy đủ: quét -> tìm mốc -> cắt (mặc định lấy dư 5 phút mỗi đầu)
   python scripts/video_split.py "E:\\videos\\GiangHo\\ten video.mp4"
 
-  # chỉ quét + tìm mốc, CHƯA cắt (xem output/video_split/<ten>/starts.jpg trước)
+  # chỉ quét + tìm mốc, CHƯA cắt (soi starts.jpg trước)
   python scripts/video_split.py <video> --stage scan --stage segment
 
   # sửa ngưỡng rồi tính lại mốc — KHÔNG chạy lại model, tốn ~1 giây
@@ -16,11 +16,21 @@ mới. Từ các mốc đó cắt video ra nhiều clip bằng ffmpeg (copy stre
   # duyệt ảnh xong thì cắt
   python scripts/video_split.py <video> --stage cut
 
-Ba stage tách rời, mỗi stage đọc/ghi `scan.json` nên chạy lại rất rẻ:
+Kết quả nằm NGAY CẠNH video gốc, mỗi video một thư mục tự chứa đủ:
+
+  E:\\videos\\GiangHo\\<tên video>\\
+      00_goc_<tên video>.mp4        <- video gốc, ĐƯỢC DỜI VÀO (--no-move để tắt)
+      <tên video>_van01_00-00-09.mp4
+      <tên video>_van02_00-11-23.mp4  …
+      starts.jpg                    <- ảnh mốc từng ván, soi trước khi tin
+      index.csv                     <- mốc, độ dài, dung lượng từng clip
+      _data/                        <- cache + timeline.csv + games.json + fens/
+
+Ba stage tách rời, chung cache `_data/scan.json` nên chạy lại rất rẻ:
 
   scan     decode + detect  (phần đắt duy nhất; có cache, --repredict để ép lại)
   segment  logic thuần      -> games.json, timeline.csv, starts.jpg, fens/*.jsonl
-  cut      ffmpeg -c copy   -> clips/*.mp4 + clips/index.csv
+  cut      ffmpeg -c copy   -> các clip ván + index.csv, rồi dời video gốc vào
 
 Cách nhận mốc ván (số liệu đo trên video thật, xem docs/VIDEO_SPLIT.md):
   * `d` = số ô lệch so với thế khai cuộc. Tàn cuộc ~30-40, khai cuộc = 0.
@@ -62,6 +72,17 @@ def recognizer():
     if _REC is None:
         _REC = XiangqiRecognizer()
     return _REC
+
+
+def work_dir(out):
+    """Thư mục phụ `_data/` — cache, csv, chuỗi FEN, frame tạm.
+
+    Thư mục gốc chỉ để lại thứ người dùng thực sự mở: video gốc, các clip ván,
+    `starts.jpg` và `index.csv`.
+    """
+    d = os.path.join(out, "_data")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def imread_u(path):
@@ -231,7 +252,7 @@ def merge_frames(cache, new):
 
 def stage_scan(video, out, args):
     """Quét thô cả video + quét tinh quanh từng ứng viên mốc ván."""
-    cache_path = os.path.join(out, "scan.json")
+    cache_path = os.path.join(work_dir(out), "scan.json")
     info = video_info(video)
     print(f"video: {info['duration'] / 60:.1f} phút, {info['width']}x{info['height']}, "
           f"{info['fps']} fps")
@@ -254,7 +275,7 @@ def stage_scan(video, out, args):
                  "frames": []}
 
     rec = recognizer()
-    frames_dir = os.path.join(out, "frames")
+    frames_dir = os.path.join(work_dir(out), "frames")
 
     # --- quét thô ---
     if not cache["frames"]:
@@ -315,7 +336,7 @@ def scan_spans(video, out, cache, spans, step, conf, label="dày"):
         return cache
     rec = recognizer()
     roi = tuple(cache["params"]["roi"]) if cache["params"].get("roi") else None
-    frames_dir = os.path.join(out, "frames")
+    frames_dir = os.path.join(work_dir(out), "frames")
     for k, (a, b) in enumerate(spans, 1):
         have = [f["t"] for f in cache["frames"] if a <= f["t"] <= b]
         if len(have) >= (b - a) / step * 0.9:      # đã có sẵn mẫu đủ dày
@@ -323,7 +344,7 @@ def scan_spans(video, out, cache, spans, step, conf, label="dày"):
         fr = decode(video, frames_dir, step, start=a, dur=b - a, tag=f"d{k:02d}")
         merge_frames(cache, detect_frames(rec, fr, conf, roi,
                                           f" {label} {k}/{len(spans)}"))
-    json.dump(cache, open(os.path.join(out, "scan.json"), "w", encoding="utf-8"),
+    json.dump(cache, open(os.path.join(work_dir(out), "scan.json"), "w", encoding="utf-8"),
               indent=0)
     return cache
 
@@ -469,7 +490,7 @@ def stage_segment(video, out, cache, args):
         cache = scan_spans(video, out, cache, spans, args.fen_step, args.conf)
         frames = cache["frames"]
 
-    fen_dir = os.path.join(out, "fens")
+    fen_dir = os.path.join(work_dir(out), "fens")
     os.makedirs(fen_dir, exist_ok=True)
     min_seen = args.min_seen if args.fen_step and args.fen_step <= 5 else 1
     for g in games:
@@ -487,9 +508,9 @@ def stage_segment(video, out, cache, args):
             for s in series:
                 fh.write(json.dumps(s, ensure_ascii=False) + "\n")
 
-    json.dump(games, open(os.path.join(out, "games.json"), "w", encoding="utf-8"),
+    json.dump(games, open(os.path.join(work_dir(out), "games.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
-    with open(os.path.join(out, "timeline.csv"), "w", newline="",
+    with open(os.path.join(work_dir(out), "timeline.csv"), "w", newline="",
               encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["t", "hms", "n", "d", "gate", "rot180", "conf", "fen"])
@@ -498,7 +519,7 @@ def stage_segment(video, out, cache, args):
                         int(f.get("rot180", False)), f["conf"], f["fen"]])
     sheet = contact_sheet(video, games, os.path.join(out, "starts.jpg"))
 
-    json.dump(rejects, open(os.path.join(out, "rejected.json"), "w",
+    json.dump(rejects, open(os.path.join(work_dir(out), "rejected.json"), "w",
                             encoding="utf-8"), ensure_ascii=False, indent=1)
 
     print(f"\n=== {len(games)} ván ===")
@@ -519,16 +540,29 @@ def stage_segment(video, out, cache, args):
 # --------------------------------------------------------------------------- #
 # stage 3: cut
 # --------------------------------------------------------------------------- #
+def clip_name(stem, i, start_hms, ext):
+    """`<tên video>_van01_00-19-17.mp4` — mang theo tên video để clip tách khỏi
+    thư mục vẫn biết là của video nào. Cắt bớt tên dài cho khỏi vượt giới hạn
+    260 ký tự của Windows."""
+    return f"{stem[:60]}_van{i:02d}_{start_hms.replace(':', '-')}{ext}"
+
+
 def stage_cut(video, out, games, duration, args):
-    """Cắt bằng `-c copy`. Mỗi clip lấy dư --lead trước và --tail sau."""
-    clips = os.path.join(out, "clips")
-    os.makedirs(clips, exist_ok=True)
+    """Cắt bằng `-c copy`. Mỗi clip lấy dư --lead trước và --tail sau.
+
+    Clip nằm THẲNG trong thư mục của video (cạnh chính file gốc), không nhét vào
+    thư mục con — mở thư mục ra là thấy ngay các ván.
+    """
+    clips = out
+    stem = os.path.splitext(os.path.basename(video))[0]
+    if stem.startswith("00_goc_"):          # video gốc đã được dời vào từ lần trước
+        stem = stem[len("00_goc_"):]
     rows = []
     for g in games:
         a = max(0.0, g["start"] - args.lead)
         b = min(duration, g["end"] + args.tail)
         ext = os.path.splitext(video)[1] or ".mp4"
-        name = f"g{g['i']:02d}_{g['start_hms'].replace(':', '-')}{ext}"
+        name = clip_name(stem, g["i"], g["start_hms"], ext)
         path = os.path.join(clips, name)
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
                # -ss TRƯỚC -i: seek theo index, không decode; với -c copy ffmpeg
@@ -562,7 +596,7 @@ def stage_cut(video, out, games, duration, args):
                      "van_bat_dau": round(g["start"], 2),
                      "van_ket_thuc": round(g["end"], 2), "mb": round(size, 1)})
     if rows:
-        with open(os.path.join(clips, "index.csv"), "w", newline="",
+        with open(os.path.join(out, "index.csv"), "w", newline="",
                   encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0]))
             w.writeheader()
@@ -571,13 +605,40 @@ def stage_cut(video, out, games, duration, args):
     return rows
 
 
+def move_source(video, out):
+    """Dời video gốc vào chính thư mục của nó, đổi tên `00_goc_<tên>.<ext>`.
+
+    Tiền tố `00_goc_` để (a) phân biệt hẳn với các clip ván, (b) luôn nằm đầu khi
+    sắp xếp theo tên. Cùng ổ đĩa thì đây chỉ là đổi tên -> tức thì; khác ổ thì phải
+    copy cả GB nên báo trước.
+    """
+    stem = os.path.splitext(os.path.basename(video))[0]
+    ext = os.path.splitext(video)[1]
+    if stem.startswith("00_goc_"):
+        return video                                   # đã dời từ lần chạy trước
+    dest = os.path.join(out, f"00_goc_{stem}{ext}")
+    if os.path.abspath(video) == os.path.abspath(dest):
+        return video
+    if os.path.exists(dest):
+        print(f"đã có {os.path.basename(dest)} — không dời nữa")
+        return dest
+    same_drive = os.path.splitdrive(os.path.abspath(video))[0].lower() == \
+        os.path.splitdrive(os.path.abspath(dest))[0].lower()
+    size_gb = os.path.getsize(video) / 1e9
+    if not same_drive:
+        print(f"video gốc khác ổ đĩa với thư mục ra -> phải COPY {size_gb:.1f} GB…")
+    shutil.move(video, dest)
+    print(f"đã dời video gốc vào -> {os.path.basename(dest)}")
+    return dest
+
+
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video")
     ap.add_argument("--out", default=None,
-                    help="mặc định output/video_split/<tên video>/")
+                    help="mặc định là thư mục CÙNG CHỖ với video, tên = tên video")
     ap.add_argument("--stage", action="append", choices=["scan", "segment", "cut"],
                     help="chạy lẻ từng stage (lặp lại được). Bỏ trống = chạy cả 3")
 
@@ -627,20 +688,31 @@ def main():
                    help="in lệnh ffmpeg ra chứ không cắt thật")
     g.add_argument("--overwrite", action="store_true",
                    help="ghi đè clip đã có (mặc định bỏ qua -> cắt lại được)")
+    g.add_argument("--no-move", action="store_true",
+                   help="KHÔNG dời video gốc vào thư mục kết quả (mặc định là dời, "
+                        "đổi tên thành 00_goc_<tên>.<ext>)")
     g.add_argument("--keep-frames", action="store_true",
-                   help="giữ lại thư mục frames/ sau khi chạy")
+                   help="giữ lại thư mục _data/frames/ sau khi chạy")
     args = ap.parse_args()
 
     video = os.path.abspath(args.video)
-    if not os.path.exists(video):
-        sys.exit(f"không thấy video: {video}")
     stem = os.path.splitext(os.path.basename(video))[0]
-    out = args.out or os.path.join(ROOT, "output", "video_split", stem)
+    # Mặc định: thư mục CÙNG CHỖ với video, đặt tên theo video. Video gốc sẽ được
+    # dời vào đây luôn nên mỗi video là một thư mục tự chứa đủ mọi thứ.
+    out = args.out or os.path.join(os.path.dirname(video), stem)
+    if not os.path.exists(video):
+        # Chạy lại lần hai: video gốc đã được dời vào trong thư mục rồi.
+        moved = os.path.join(out, f"00_goc_{os.path.basename(video)}")
+        if os.path.exists(moved):
+            video = moved
+            print(f"video gốc đã nằm trong thư mục kết quả -> dùng {moved}")
+        else:
+            sys.exit(f"không thấy video: {video}")
     os.makedirs(out, exist_ok=True)
     stages = args.stage or ["scan", "segment", "cut"]
     print(f"video : {video}\nout   : {out}\nstage : {', '.join(stages)}\n")
 
-    cache_path = os.path.join(out, "scan.json")
+    cache_path = os.path.join(work_dir(out), "scan.json")
     cache = None
     if "scan" in stages:
         cache = stage_scan(video, out, args)
@@ -652,17 +724,19 @@ def main():
     games = None
     if "segment" in stages:
         games = stage_segment(video, out, cache, args)
-    elif os.path.exists(os.path.join(out, "games.json")):
-        games = json.load(open(os.path.join(out, "games.json"), encoding="utf-8"))
+    elif os.path.exists(os.path.join(work_dir(out), "games.json")):
+        games = json.load(open(os.path.join(work_dir(out), "games.json"), encoding="utf-8"))
 
     if "cut" in stages:
         if not games:
             sys.exit("chưa có games.json — chạy --stage segment trước")
         dur = (cache or {}).get("duration") or video_info(video)["duration"]
         print(f"\n=== cắt (lấy dư {args.lead:.0f}s trước / {args.tail:.0f}s sau) ===")
-        stage_cut(video, out, games, dur, args)
+        rows = stage_cut(video, out, games, dur, args)
+        if rows and not args.no_move and not args.dry_run:
+            move_source(video, out)
 
-    frames_dir = os.path.join(out, "frames")
+    frames_dir = os.path.join(work_dir(out), "frames")
     if not args.keep_frames and os.path.isdir(frames_dir) and "cut" in stages:
         shutil.rmtree(frames_dir, ignore_errors=True)
         print(f"đã dọn {os.path.relpath(frames_dir, ROOT)} (--keep-frames để giữ)")
