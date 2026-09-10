@@ -5,19 +5,21 @@ Cập nhật 2026-09-11. Kèm với [`VIDEO_BATCH_RUNBOOK.md`](VIDEO_BATCH_RUNBO
 
 ---
 
-## 1. Toàn bộ nguồn
+## 1. Toàn bộ nguồn — ĐÃ ĐO ĐỘ DÀI THẬT
 
-| # | Nguồn | Số video | Dung lượng / độ dài | Trạng thái |
+| # | Nguồn | Video | Giờ | Trạng thái |
 |---|---|---|---|---|
-| 1 | `E:\videos\GiangHo` | 229 | 416,9 giờ · 656 GB | **đang cắt** — 93 xong (342 ván), 136 còn lại |
-| 2 | `E:\Tiktoker\cotuongnghiasing\download` | 112 | 149,6 GB | chờ — gộp vào (1) rồi cắt |
-| 3 | `E:\Tiktoker\cotuongnghiasing\tiktoklive\raw` | 159 | 225,1 GB | chờ |
-| 4 | `E:\Tiktoker\cotuongnghiasing\gianghorecord\records` | 14 | 22,4 GB | chờ |
-| 5 | `E:\Tiktoker\cotuongnghiasing\gianghorecord\pending` | 1 | 0,4 GB | chờ |
-| 6 | `E:\Tiktoker\cotuongnghiasing\tiktoklive\edit` | 87 | 36,8 GB | **cân nhắc bỏ** — bản đã dựng/cắt sẵn, nhiều khả năng là đoạn trích của (3) |
-| 7 | `E:\Tiktoker\cotuongnghiasing\tiktoklive\post` | 1 | 1,7 GB | như trên |
-| 8 | YouTube `@Cotuongnghiasing` | **1028** | **1574,7 giờ** | chờ tải — xem §2 |
-| | **Cộng file cục bộ (1-5)** | **515** | **~1054 GB** | |
+| 1 | `E:\videos\GiangHo` | 228 | **415,9** | **đang cắt** — 93 xong (342 ván), 136 còn lại |
+| 2 | `E:\Tiktoker\cotuongnghiasing\tiktoklive\raw` | 159 | **452,3** | chờ (đợt 3) |
+| 3 | `E:\Tiktoker\cotuongnghiasing\download` | 112 | **286,2** | chờ (đợt 3) |
+| 4 | `E:\Tiktoker\cotuongnghiasing\gianghorecord` | 15 | **35,9** | chờ (đợt 3) |
+| 5 | `E:\Tiktoker\cotuongnghiasing\tiktoklive\edit` + `post` | 88 | **29,8** | cân nhắc bỏ — nghi là đoạn trích của (2) |
+| | **CỘNG CỤC BỘ** | **602** | **1220,1** | |
+| 6 | YouTube `@Cotuongnghiasing` | 1026 | **1575,0** | 446 video (868 giờ) **đã có ở máy** |
+| | **CỘNG KHÔNG TRÙNG** | **1182** | **~1926** | = 1220 cục bộ + 706 YouTube chưa có |
+
+Cộng thô cả hai là 2795 giờ, nhưng **đếm trùng**: kênh YouTube là bản backup của chính
+kho cục bộ. Số thật là **~1926 giờ ≈ 80 ngày phát liên tục**.
 
 ## 2. YouTube — 713 video ẨN, phải đi đúng đường mới thấy
 
@@ -47,42 +49,66 @@ yt-dlp --cookies <file> --extractor-args "youtubetab:skip=authcheck" \
 Cookie là **khoá phiên đăng nhập Google** — để ngoài repo, không commit, dùng xong
 nên xoá hoặc đăng xuất phiên đó.
 
-## 3. Chỗ chứa — đây mới là ràng buộc
+## 3. Chỗ chứa — đã bớt căng sau khi lọc trùng
 
-| | |
+Đối chiếu độ dài (±3 giây) giữa 1026 video YouTube và 602 file cục bộ:
+
+| | Video | Giờ | Tải 720p |
+|---|---|---|---|
+| YouTube đã có ở máy | 446 | 868 | — |
+| **YouTube CHƯA có** | **580** | **706** | **~477 GB** |
+
+Chỉ cần tải **477 GB** chứ không phải ~1060 GB như ước ban đầu. Phân bố để chia đợt:
+
+| Độ dài | Video | Giờ | Tải 720p |
+|---|---|---|---|
+| dưới 10 phút | 92 | 5 | ~4 GB |
+| 10-30 phút | 108 | 35 | ~23 GB |
+| 30-60 phút | 131 | 101 | ~68 GB |
+| 1-2 giờ | 120 | 170 | ~115 GB |
+| trên 2 giờ | 129 | 395 | ~267 GB |
+
+Danh sách id: `output/yt_can_tai.txt` (đã sắp NGẮN TRƯỚC, `yt-dlp -a` nhận thẳng).
+
+> ⚠ 706 giờ là **cận trên**. File cục bộ nhiều cái là `part1..5` cắt từ một buổi live
+> dài, còn YouTube giữ nguyên buổi — những cặp đó không khớp độ dài dù cùng nội dung,
+> nên bị tính nhầm là "chưa có". Tải xong nên soi lại vài cái trước khi tin hết.
+
+| Chỗ trống | |
 |---|---|
-| E: trống | ~1547 GB |
-| D: trống | 811 GB |
-| (1) cắt nốt cần | ~700 GB |
-| (2)-(5) cắt cần | ~1370 GB clip |
-| (8) tải 720p (~1,5 Mbps) | **~1060 GB**, cắt ra thêm ~1380 GB |
+| E: | ~1547 GB |
+| D: | 811 GB |
+| Cắt nốt (1) cần | ~700 GB |
+| Tải YouTube phần thiếu | ~477 GB, cắt ra thêm ~620 GB |
 
-⇒ **Không đủ chỗ để làm tất cả cùng lúc.** Bốn hướng, chọn trước khi tải:
+## 4. Thứ tự làm — ưu tiên GIANG HỒ → YOUTUBE → TIKTOK
 
-- **Lọc trùng trước.** Kênh YouTube là bản backup của chính đám file cục bộ, nên
-  phần lớn 1028 video nhiều khả năng đã có ở (1)-(5). Đối chiếu theo **độ dài ±3 giây**
-  rồi chỉ tải phần thiếu — hướng này rẻ nhất, làm trước khi tải bất cứ thứ gì.
-- **Tải 480p** (~0,8 Mbps → ~570 GB): detector đọc bàn cờ ở 480p vẫn ổn với bàn chiếm
-  hơn 1/3 khung, nhưng **chưa đo** — phải thử vài video trước.
-- **Cắt xong thì xoá bản tải về**, chỉ giữ clip (kênh YouTube vẫn là bản gốc trên mây).
-- **Chia đợt**: tải + cắt 200 video một đợt, nén, rồi mới tới đợt sau.
+Thứ tự do người dùng chốt 2026-09-11.
 
-## 4. Thứ tự làm
+### Đợt 1 — Giang Hồ (đang chạy)
+1. **Cắt nốt `E:\videos\GiangHo`** — 136 video còn lại, ~12-15 tiếng.
+2. **Soát** (`video_verify.py`) rồi **nén** (`video_shrink.py`) — thu hồi ~430 GB.
+   Phải xong bước nén trước khi kéo nguồn mới về, vì nó trả lại chỗ.
+3. **Soi 22 ván dài hơn 30 phút** (nghi dính hai ván làm một): chạy lại
+   `--stage segment --start-dist 4 --gap-step 4`, xem `starts.jpg` rồi mới cắt lại.
 
-1. **Cắt nốt (1)** — đang chạy, ~12-15 tiếng. Không đụng gì thêm cho tới khi xong.
-2. **Nén clip đã cắt** — `video_shrink.py`, thu hồi ~430 GB. **Phải xong bước này
-   trước khi thêm nguồn mới**, vì nó trả lại chỗ.
-3. **Gộp (2)-(5) vào `E:\videos\GiangHo`** rồi chạy lại lệnh cắt. Lưu ý:
-   - Đã kiểm: **2 file trùng tên** với (1) → đổi tên khi dời, đừng ghi đè.
-   - Dời trong cùng ổ E: là đổi tên, tức thì.
-4. **Soát + nén** đợt đó.
-5. **Lọc trùng YouTube** (§3) → chốt danh sách thật sự cần tải.
-6. **Tải + cắt YouTube theo đợt**, mỗi đợt nén xong mới sang đợt kế.
-7. **Soi 22 ván dài hơn 30 phút** (nghi dính hai ván làm một) — `--stage segment`
-   với `--start-dist 4 --gap-step 4`, xem `starts.jpg` rồi mới cắt lại.
-8. **Chuỗi FEN** cho video nào cần biên bản — `--fen-step 2`.
+### Đợt 2 — YouTube (1028 video, 1574,7 giờ)
+4. **Lọc trùng trước khi tải** — `scripts/video_dedup_yt.py`. Kênh là bản backup của
+   chính kho cục bộ nên phần lớn nhiều khả năng đã có; chỉ tải phần thiếu.
+5. **Tải theo đợt ~150-200 video**, ngắn trước dài sau, mỗi đợt cắt + nén xong mới
+   sang đợt kế — để không bao giờ giữ đồng thời cả bản tải lẫn clip chưa nén.
+6. Tải xong đợt nào thì **dời file vào `E:\videos\GiangHo`** rồi chạy lệnh cắt như cũ.
 
-Bước 6 chỉ bắt đầu khi bước 2 và 4 đã trả đủ chỗ trống.
+### Đợt 3 — TikTok / kho cục bộ còn lại
+7. **Gộp `download` (112) + `tiktoklive
+aw` (159) + `gianghorecord` (15)** vào
+   `E:\videos\GiangHo` rồi cắt. Đã kiểm: **2 file trùng tên** với kho hiện có →
+   đổi tên khi dời, đừng ghi đè.
+8. Quyết sau: có lấy `tiktoklive\edit` (87) + `post` (1) không — nghi là đoạn trích
+   của `raw`, cắt lại sẽ ra clip trùng.
+
+### Sau cùng
+9. **Chuỗi FEN** cho video nào cần biên bản ván cờ — `--fen-step 2`.
 
 ## 5. Lệnh gộp nguồn cục bộ (bước 3)
 
