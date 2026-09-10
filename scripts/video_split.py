@@ -81,6 +81,28 @@ def short(path):
                         os.path.basename(path))
 
 
+def save_json(obj, path, indent=0):
+    """Ghi NGUYÊN TỬ: ra file tạm rồi đổi tên đè lên.
+
+    `json.dump(obj, open(path,"w"))` cắt cụt file TRƯỚC khi ghi — bị giết đúng lúc đó
+    là cache hỏng, lần sau đọc lên ném JSONDecodeError và chết cả video (đã dính).
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, indent=indent, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def load_json(path, default=None):
+    """Đọc JSON; cache hỏng thì coi như KHÔNG có, thay vì làm chết cả video."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"cache hỏng ({os.path.basename(path)}: {e}) -> bỏ, quét lại")
+        return default
+
+
 def work_dir(out):
     """Thư mục phụ `_data/` — cache, csv, chuỗi FEN, frame tạm.
 
@@ -298,8 +320,8 @@ def stage_scan(video, out, args):
 
     cache = None
     if os.path.exists(cache_path) and not args.repredict:
-        cache = json.load(open(cache_path, encoding="utf-8"))
-        same = (cache.get("params", {}).get("step") == args.step
+        cache = load_json(cache_path)
+        same = cache is not None and (cache.get("params", {}).get("step") == args.step
                 and cache.get("params", {}).get("conf") == args.conf)
         if same:
             print(f"dùng lại {short(cache_path)} "
@@ -363,7 +385,7 @@ def stage_scan(video, out, args):
             merge_frames(cache, detect_frames(rec, fr, args.conf, roi, ""))
             done_chunks.add(round(a, 1))
             cache["chunks_done"] = sorted(done_chunks)
-            json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
+            save_json(cache, cache_path)
             shutil.rmtree(os.path.join(frames_dir, f"c{int(a):07d}"),
                           ignore_errors=True)
             print(f"  khúc {ci}/{len(todo)} ({hhmmss(a)}-{hhmmss(a + d)}): "
@@ -397,9 +419,9 @@ def stage_scan(video, out, args):
         # Ghi cache sau MỖI cửa sổ (không phải cuối vòng): tiến trình chết giữa
         # chừng thì lần sau khỏi quét lại mấy chục cửa sổ đã làm.
         cache["fine_done"] = sorted(done)
-        json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
+        save_json(cache, cache_path)
     cache["fine_done"] = sorted(done)
-    json.dump(cache, open(cache_path, "w", encoding="utf-8"), indent=0)
+    save_json(cache, cache_path)
     print(f"scan xong: {len(cache['frames'])} mẫu -> "
           f"{short(cache_path)}")
     return cache
@@ -421,8 +443,7 @@ def scan_spans(video, out, cache, spans, step, conf, label="dày"):
                     keyframe_only=key_only and step >= 4)
         merge_frames(cache, detect_frames(rec, fr, conf, roi,
                                           f" {label} {k}/{len(spans)}"))
-    json.dump(cache, open(os.path.join(work_dir(out), "scan.json"), "w", encoding="utf-8"),
-              indent=0)
+    save_json(cache, os.path.join(work_dir(out), "scan.json"))
     return cache
 
 
@@ -614,8 +635,7 @@ def stage_segment(video, out, cache, args):
             for s in series:
                 fh.write(json.dumps(s, ensure_ascii=False) + "\n")
 
-    json.dump(games, open(os.path.join(work_dir(out), "games.json"), "w", encoding="utf-8"),
-              ensure_ascii=False, indent=1)
+    save_json(games, os.path.join(work_dir(out), "games.json"), indent=1)
     with open(os.path.join(work_dir(out), "timeline.csv"), "w", newline="",
               encoding="utf-8") as fh:
         w = csv.writer(fh)
@@ -625,8 +645,7 @@ def stage_segment(video, out, cache, args):
                         int(f.get("rot180", False)), f["conf"], f["fen"]])
     sheet = contact_sheet(video, games, os.path.join(out, "starts.jpg"))
 
-    json.dump(rejects, open(os.path.join(work_dir(out), "rejected.json"), "w",
-                            encoding="utf-8"), ensure_ascii=False, indent=1)
+    save_json(rejects, os.path.join(work_dir(out), "rejected.json"), indent=1)
 
     print(f"\n=== {len(games)} ván ===")
     for g in games:
@@ -799,7 +818,7 @@ def run_one(video, out, args):
     if "scan" in stages:
         cache = stage_scan(video, out, args)
     elif os.path.exists(cache_path):
-        cache = json.load(open(cache_path, encoding="utf-8"))
+        cache = load_json(cache_path)
     elif stages != ["cut"]:
         raise RuntimeError(f"chưa có {cache_path} — chạy --stage scan trước")
 
@@ -808,7 +827,7 @@ def run_one(video, out, args):
     if "segment" in stages:
         games = stage_segment(video, out, cache, args)
     elif os.path.exists(games_path):
-        games = json.load(open(games_path, encoding="utf-8"))
+        games = load_json(games_path)
 
     if "cut" in stages:
         if games is None:
