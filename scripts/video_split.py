@@ -135,8 +135,20 @@ def hhmmss(t):
     return f"{t // 3600:02d}:{t % 3600 // 60:02d}:{t % 60:02d}"
 
 
-def _run(cmd, timeout=None):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def _run(cmd, timeout=None, retries=3):
+    """Chạy lệnh ngoài, THỬ LẠI khi máy hết RAM không spawn nổi tiến trình.
+
+    Dấu hiệu của ca đó: mã thoát khác 0 nhưng stderr RỖNG — không phải file hỏng mà
+    là hệ điều hành từ chối tạo tiến trình. Đã gặp: 130 video liên tiếp báo
+    "ffprobe lỗi:" trống trơn trong khi chạy tay vẫn tốt, chỉ vì RAM còn 4/31 GB.
+    """
+    for i in range(retries):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if r.returncode == 0 or r.stderr.strip():
+            return r
+        if i < retries - 1:
+            time.sleep(5 * (i + 1))
+    return r
 
 
 def video_info(video):
