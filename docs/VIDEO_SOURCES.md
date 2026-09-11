@@ -21,33 +21,49 @@ Cập nhật 2026-09-11. Kèm với [`VIDEO_BATCH_RUNBOOK.md`](VIDEO_BATCH_RUNBO
 Cộng thô cả hai là 2795 giờ, nhưng **đếm trùng**: kênh YouTube là bản backup của chính
 kho cục bộ. Số thật là **~1926 giờ ≈ 80 ngày phát liên tục**.
 
-## 2. YouTube — 713 video ẨN, phải đi đúng đường mới thấy
+## 2. YouTube — đã điểm danh toàn bộ 1026 video
 
-| Đường | Số video |
-|---|---|
-| tab `/videos` + `/streams` (kể cả có cookie) | 314 |
-| **uploads playlist `UUs5-T_IsPmBEBwiGuzyw-vw`** | **1028** |
-
-Video ẩn (unlisted) **không hiện trên tab kênh dù đã đăng nhập** — chỉ hiện trong
-uploads playlist. Lệnh đúng:
+Video ẩn **không hiện trên tab /videos và /streams dù đã đăng nhập** — chỉ hiện trong
+**uploads playlist**. Đi sai đường thì chỉ thấy 314/1028 video.
 
 ```bash
-yt-dlp --cookies <file> --extractor-args "youtubetab:skip=authcheck" \
-       "https://www.youtube.com/playlist?list=UUs5-T_IsPmBEBwiGuzyw-vw"
+yt-dlp --cookies <file> --extractor-args "youtubetab:skip=authcheck"        "https://www.youtube.com/playlist?list=UUs5-T_IsPmBEBwiGuzyw-vw"
 ```
 
-### Cookie — hai cái bẫy đã dính
+### Chế độ hiển thị (đo từng video, 2026-09-11)
 
-1. **File cookie Netscape bắt buộc ngăn cách bằng TAB.** Paste qua chat thì tab
-   thành dấu cách, yt-dlp bỏ sạch mọi dòng (`invalid length 1`) và **chạy như chưa
-   đăng nhập** mà không báo lỗi rõ ràng — chỉ thấy đủ 314 video.
-2. **yt-dlp GHI ĐÈ file cookie** sau mỗi lần chạy. Giữ bản gốc riêng, mỗi lần chạy
-   copy ra bản làm việc:
+| Chế độ | Video | |
+|---|---|---|
+| **Unlisted** | **607** | 343 trùng file cục bộ · 91 đã tải · 173 cần tải |
+| Public | 229 | |
+| Không truy cập được | 96 | chủ kênh cũng không mở được — nhiều khả năng đã bị xoá/gỡ |
+| Private | 89 | người dùng xác nhận **không phải video cờ** |
+| Sắp phát / khác | 5 | |
+
+> ⚠ **Đừng hỏi YouTube quá nhanh.** Chạy 3 luồng song song thì 438/1028 video trả về
+> rác (`rate-limited by YouTube for up to an hour`) và suýt chốt sai con số. Chạy
+> tuần tự thì chính xác. Muốn nhanh phải kèm `--sleep-requests`.
+
+### Cookie — hai bẫy
+
+1. **File Netscape bắt buộc ngăn cách bằng TAB.** Paste qua chat thì tab thành dấu
+   cách → yt-dlp bỏ sạch mọi dòng (`invalid length 1`) và **chạy như chưa đăng nhập**
+   mà không báo lỗi rõ — chỉ thấy đúng 314 video như khách vãng lai.
+2. **yt-dlp GHI ĐÈ file cookie** sau mỗi lần chạy. Giữ bản gốc riêng:
    - gốc: `C:\Users\PC\.yt_cookies_master.txt`
-   - làm việc: `C:\Users\PC\.yt_cookies_work.txt`
+   - làm việc: `C:\Users\PC\.yt_cookies_work.txt` (copy lại trước mỗi lượt)
 
-Cookie là **khoá phiên đăng nhập Google** — để ngoài repo, không commit, dùng xong
-nên xoá hoặc đăng xuất phiên đó.
+Cookie là **khoá phiên đăng nhập Google** — để ngoài repo, không commit, dùng xong nên
+đăng xuất phiên đó.
+
+### Tiến độ tải (2026-09-12)
+
+| | |
+|---|---|
+| Cần tải (không trùng file cục bộ) | 580 |
+| **Đã tải** | **461** |
+| Còn lại | 119 |
+| Chờ gộp vào kho | 66 file · 22 GB |
 
 ## 3. Chỗ chứa — đã bớt căng sau khi lọc trùng
 

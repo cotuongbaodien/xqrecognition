@@ -1,119 +1,180 @@
-# Runbook — chạy lô cắt video kho `E:\videos\GiangHo`
+# Runbook — cắt kho video thành clip từng ván
 
-Bản hướng dẫn để **tự chạy tiếp** không cần hỏi lại. Cập nhật 2026-09-10.
-Chi tiết công cụ: [`VIDEO_SPLIT.md`](VIDEO_SPLIT.md).
+Cập nhật **2026-09-12**. Đây là tài liệu vận hành: đang ở đâu, chạy tiếp thế nào,
+và những cái bẫy đã trả giá. Công cụ chi tiết xem [`VIDEO_SPLIT.md`](VIDEO_SPLIT.md),
+danh sách nguồn xem [`VIDEO_SOURCES.md`](VIDEO_SOURCES.md).
 
 ---
 
-## 1. Đang ở đâu
+## 1. Đang ở đâu (2026-09-12)
 
 | | |
 |---|---|
-| Kho | `E:\videos\GiangHo` — **229 video, 416,9 giờ, 656 GB** |
-| Đã cắt | **~78 video · 56,6 giờ · ~260 ván** (~120 GB clip) |
-| Còn lại | **~150 video · ~360 giờ · 550 GB nguồn** |
-| Nén | mới nén ~30 clip rồi tạm dừng để nhường GPU cho việc cắt |
-| Chỗ trống | E: ~1579 GB · D: ~811 GB |
+| **Video đã cắt xong** | **481** |
+| **TỔNG SỐ VÁN** | **1948** |
+| Giờ nội dung đã xử lý | 513,8 giờ |
+| Dung lượng clip | 597 GB |
+| Video chờ cắt (tầng ngoài `E:\videos\GiangHo`) | ~168 |
+| YouTube đã tải | 461 / 580 |
+| File tải xong chờ gộp (`E:\videos\_yt_tai`) | 66 · 22 GB |
+| Chỗ trống | E: 937 GB · D: 812 GB |
 
-Clip copy-stream của phần còn lại sẽ chiếm **~715 GB** → cắt xong E: còn ~860 GB.
-**Chưa cần dùng ổ D.**
+Số liệu sống: mở `E:\videos\GiangHo\_BAO_CAO.md`, hoặc chạy
+`python scripts/video_report.py`.
 
-## 2. Chạy tiếp (việc chính)
+## 2. Video mới — quy trình cố định
 
-Mở terminal ở `C:\Resources\xqrecognition`:
+Người dùng bỏ video mới vào **`E:\videos\newvideo`** rồi báo. Việc cần làm:
+
+```python
+# dời vào kho, đổi tên nếu trùng (trùng tên FILE hoặc trùng tên THƯ MỤC kết quả)
+import os, shutil
+src, dst = r"E:\videos\newvideo", r"E:\videos\GiangHo"
+for f in sorted(os.listdir(src)):
+    p = os.path.join(src, f)
+    if not os.path.isfile(p) or not f.lower().endswith(
+            (".mp4", ".mov", ".mkv", ".avi", ".m4v", ".ts", ".webm")):
+        continue
+    stem, ext = os.path.splitext(f); target, k = os.path.join(dst, f), 2
+    while os.path.exists(target) or os.path.isdir(os.path.join(dst, stem)):
+        stem = f"{os.path.splitext(f)[0]}_{k}"; target = os.path.join(dst, stem + ext); k += 1
+    shutil.move(p, target)
+```
+
+Rồi chạy lệnh cắt ở §3. Video đã cắt tự bị bỏ qua nên cứ chạy cả thư mục.
+
+> Tiến trình cắt **đọc danh sách MỘT LẦN lúc khởi động**. Video dời vào sau đó phải
+> đợi lượt chạy kế tiếp — không tự nhận giữa chừng.
+
+## 3. Lệnh chạy
 
 ```bat
+cd C:\Resources\xqrecognition
+
+::  CẮT — chỉ chạy MỘT tiến trình, xem §5 trước
 python scripts\video_split.py "E:\videos\GiangHo" --fen-step 0 --lead 120 --tail 120 --reencode never
-```
 
-- Tự **bỏ qua video đã cắt** (thư mục có `index.csv`) nên chạy lại lúc nào cũng được.
-- Ngắt giữa chừng thoải mái: video dở sẽ làm lại từ khúc quét còn dang dở.
-- `--reencode never` = **copy stream, nhanh nhất** (~3 phút xử lý cho mỗi giờ video).
-  Ước **15-20 tiếng** cho 360 giờ còn lại.
+::  TẢI YouTube phần còn thiếu (tự bỏ qua cái đã tải)
+python scripts\yt_download.py output\yt_can_tai.txt
 
-Muốn nó tự chạy lại khi tiến trình chết (lỗi CUDA lâu lâu vẫn xảy ra):
-
-```bat
-for /L %i in (1,1,40) do python scripts\video_split.py "E:\videos\GiangHo" --fen-step 0 --lead 120 --tail 120 --reencode never && goto :done
-:done
-```
-
-### Dừng SẠCH giữa lô
-
-Tạo file rỗng tên `_STOP` trong `E:\videos\GiangHo`. Nó cắt xong video đang làm rồi
-thoát, và tự xoá `_STOP`. Đừng giết ngang tiến trình — dễ để lại clip ghi dở.
-
-```bat
-echo. > E:\videos\GiangHo\_STOP
-```
-
-## 3. Sau khi cắt xong
-
-**a) Soát lại** (bắt clip ghi dở, thiếu/thừa file):
-
-```bat
+::  SOÁT clip (bắt clip ghi dở)
 python scripts\video_verify.py "E:\videos\GiangHo"
-python scripts\video_verify.py "E:\videos\GiangHo" --fix    ::  xoá clip hỏng + index để cắt lại
-```
 
-**b) Nén cho nhẹ** (~10-12 tiếng, thu hồi ~430 GB):
-
-```bat
-python scripts\video_shrink.py "E:\videos\GiangHo" --dry-run   ::  xem trước
+::  NÉN clip cho nhẹ (~1/3 dung lượng)
 python scripts\video_shrink.py "E:\videos\GiangHo"
+
+::  BÁO CÁO số ván
+python scripts\video_report.py
+
+::  DÒ FILE TRÙNG TUYỆT ĐỐI giữa các nguồn
+python scripts\video_dupes.py
 ```
 
-Chỉ đụng clip `*_vanNN_*`, **không bao giờ đụng `00_goc_*`**. Encode xong nó so lại
-độ dài mới dám thay; lệch quá 2 giây là bỏ bản mới, giữ file cũ.
+Gộp file tải về vào kho rồi cắt: dùng đoạn code ở §2 nhưng `src = E:\videos\_yt_tai`
+(và `D:\videos\_yt_tai` nếu có).
 
-**c) Chuỗi FEN** (làm sau cùng, chỉ khi cần biên bản ván cờ):
+**Dừng sạch giữa chừng**: `echo. > E:\videos\GiangHo\_STOP` — cắt xong video đang làm
+rồi thoát. Đừng giết ngang.
 
-```bat
-python scripts\video_split.py "<đường dẫn video>" --stage segment --fen-step 2
+## 4. Thứ tự việc còn lại
+
+1. Cắt nốt ~168 video đang chờ (gồm 10 video mới ngày 12/09).
+2. Gộp 66 file YouTube đã tải → cắt tiếp.
+3. Tải nốt 119 video YouTube còn thiếu → gộp → cắt.
+4. Soát (`video_verify`) rồi nén (`video_shrink`) — thu hồi ~400 GB.
+5. **Lọc ván trùng bằng chuỗi FEN** trước khi đăng — xem §7, đây là việc bắt buộc.
+6. Kho TikTok (774 giờ) — đợt cuối.
+
+## 5. BA LUẬT SỐNG CÒN (đều đã trả giá)
+
+**① Chỉ MỘT tiến trình cắt tại một thời điểm.** Kiểm trước khi chạy:
+
+```powershell
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*video_split.py*' -and $_.Name -eq 'python.exe' } | Select-Object ProcessId
 ```
 
-## 4. Ba luật phải nhớ
+Hai tiến trình cùng thư mục sẽ xoá thư mục frame tạm của nhau (`Could not open file
+...jpg`) và khoá file của nhau (`WinError 32`).
 
-1. **Chỉ chạy MỘT tiến trình cắt tại một thời điểm.** Hai tiến trình cùng thư mục sẽ
-   xoá file frame tạm của nhau, ffmpeg báo `Could not open file ...jpg` rất khó đoán.
-   Kiểm tra: `tasklist | findstr python`.
-2. **Đừng chạy chung với job dùng GPU khác** (vd `transcribe_one.py`). VRAM đầy thì
-   detect chết bằng `CUDA error: an illegal memory access`. Muốn chạy chung thì ép
-   phần detect sang CPU: đặt biến môi trường `OCR_MODEL_FORMAT=onnx` (chậm hơn ~25%
-   nhưng không đụng GPU).
-3. **Nén và cắt đừng chạy song song.** Cả hai ăn cùng khối encoder NVENC, mỗi việc
-   chạy nửa tốc. Cắt xong hẵng nén.
+**② Dừng tiến trình nền KHÔNG giết vòng giám sát.** Đã có lúc tồn tại **7 vòng
+`run_all.sh` + 2 tiến trình cắt** cùng lúc vì mỗi lần khởi động lại, vòng cũ vẫn sống
+và tiếp tục đẻ tiến trình mới. Phải diệt theo PID:
 
-## 5. Khi nào cần ổ D
-
-Chỉ khi E: xuống dưới ~200 GB. Cách đơn giản nhất là **dời bớt thư mục đã xong** sang
-D rồi cắt tiếp — công cụ chỉ tìm video ở tầng đầu của `E:\videos\GiangHo` nên thư mục
-kết quả nằm đâu cũng không ảnh hưởng:
-
-```bat
-move "E:\videos\GiangHo\<tên thư mục đã xong>" "D:\videos\GiangHo_done\"
+```powershell
+Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'bash.exe' -and $_.CommandLine -match 'run_all|wait_ram' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
-**Chưa xoá gì cả** — bản gốc vẫn nằm nguyên trong từng thư mục dưới tên `00_goc_*`,
-để lỡ mốc ván sai còn cắt lại. Quyết định xoá bản gốc để dành sau khi soi đủ.
+⚠ Lọc phải kèm **tên tiến trình**. Lọc chỉ theo CommandLine thì chính câu lệnh
+PowerShell/shell đang chạy cũng khớp → tự giết mình, hoặc chờ mãi một tiến trình
+không tồn tại (pipeline từng đứng 6 tiếng vì lỗi này).
 
-## 6. Kiểm tra nhanh bất cứ lúc nào
+**③ Cần ít nhất ~6 GB RAM trống.** Máy 31 GB nhưng qemu + WSL + java + chrome ăn hết,
+có lúc chỉ còn 3,6 GB → Windows giết tiến trình cắt **4 lần liên tiếp**. Dấu hiệu nhận
+biết: hàng loạt `ffprobe lỗi:` **với thông báo TRỐNG TRƠN** (không spawn nổi tiến
+trình, không phải file hỏng). Muốn nhẹ RAM thì đặt `OCR_MODEL_FORMAT=onnx` (chậm hơn
+~25%, không dùng GPU).
 
-```bat
-::  đang tới đâu
-type E:\videos\GiangHo\_video_split.log | findstr /C:"xong sau"
-
-::  đếm ván
-python -c "import os;r=r'E:\videos\GiangHo';print(sum(1 for d in os.listdir(r) if os.path.isdir(os.path.join(r,d)) for f in os.listdir(os.path.join(r,d)) if '_van' in f))"
-```
-
-## 7. Những chỗ đã trả giá (đừng lặp lại)
+## 6. Sự cố đã gặp và cách chặn
 
 | Sự cố | Nguyên nhân | Đã chặn bằng |
 |---|---|---|
-| Mốc ván lệch 3-6 phút | nhiều lượt decode ghi chung thư mục frame | thư mục riêng theo tag + PID |
-| `Could not open file …jpg` | hai tiến trình cắt cùng lúc xoá frame của nhau | PID trong tên thư mục |
-| `CUDA illegal memory access` | job transcribe chiếm hết VRAM | dừng job kia, hoặc `OCR_MODEL_FORMAT=onnx` |
-| `Expecting ',' delimiter` | cache bị giết đúng lúc ghi | ghi nguyên tử (.tmp + đổi tên) |
-| Mất một ván khi "tối ưu" decode | nới ngưỡng keyframe-only quá tay | ngưỡng `keyframe <= step/8` |
-| Nén AV1 chỉ nhỏ đi 2% | encode AV1 sang H.264 là đổi xuôi thành ngược | bỏ qua mọi file bitrate thấp |
+| Mốc ván lệch 3-6 phút | nhiều lượt decode ghi chung thư mục frame | thư mục riêng theo tag **+ PID** |
+| `Could not open file …jpg` | hai tiến trình cắt xoá frame của nhau | PID trong tên thư mục |
+| `WinError 32` khoá file | hai tiến trình cắt cùng video | luật ① |
+| `CUDA illegal memory access` | job transcribe của người dùng chiếm hết VRAM | dừng job kia, hoặc `OCR_MODEL_FORMAT=onnx` |
+| `Expecting ',' delimiter` | cache bị giết đúng lúc đang ghi | ghi nguyên tử (`.tmp` + đổi tên) |
+| `ffprobe lỗi:` trống trơn ×130 | hết RAM, không spawn nổi tiến trình | `_run()` thử lại 3 lần khi mã≠0 **và** stderr rỗng |
+| Mất một ván khi "tối ưu" decode | nới ngưỡng keyframe-only quá tay | ngưỡng `keyframe ≤ step/8` |
+| Nén AV1 chỉ nhỏ đi 2% | encode AV1 → H.264 là đổi xuôi thành ngược | bỏ qua mọi file bitrate thấp |
+| Báo "0 video tải được" | đếm theo mã thoát, mà yt-dlp thoát ≠0 khi có bất kỳ video nào lỗi | đếm chênh lệch dòng trong `_archive.txt` |
+| Vòng báo cáo tự chết | pipeline và vòng watch cùng ghi một file | ghi nguyên tử |
+
+## 7. Ván trùng — PHẢI xử lý trước khi đăng
+
+Đã đo, không phải phỏng đoán:
+
+- **5 buổi có CẢ bản đầy đủ LẪN các phần** trong kho (`caotienminhla260818`,
+  `minhla250426`, `minhlacaotien`, `minhlaphucloi`, `MinhLaSonHang Manh`) →
+  **~99 ván bị cắt hai lần**. Xác minh: `MinhLaSonHang Manh - P1` tại giây 60 khớp
+  **lệch 0 ô** với bản đầy đủ tại giây 60.
+- **19 file nguồn trùng tuyệt đối** (26,3 GB) — `video_dupes.py` đã dò ra, chưa xoá.
+- Ba nguồn chồng nhau (cục bộ / YouTube / TikTok) nên còn trùng nữa sau khi cắt.
+
+**Tên file và dung lượng KHÔNG bắt được trùng ở mức ván** — hai clip cùng một ván từ
+hai nguồn có tên khác hẳn, độ dài khác, dung lượng khác. Phải so bằng **chuỗi FEN**:
+lấy vài chục thế cờ đầu mỗi clip làm vân tay, ván nào trùng thì gom nhóm, giữ bản nét
+nhất. Chạy `video_split.py --stage segment --fen-step 2` cho từng video để có chuỗi FEN.
+
+## 8. File chia phần — đã kiểm, gần như không mất ván
+
+Buổi live 8-9 tiếng hay bị chia thành `_p1.._p8`. Lo ngại: chỗ chia rơi vào giữa ván.
+
+Đo bằng thế cờ trên 31 ranh giới (`video_stitch_parts.py --dry-run`):
+**30/31 chỗ lệch 17-42 ô = hai ván khác nhau**, chỉ **1 chỗ** thật sự đứt một ván.
+Các phần cũng **không nối tiếp nhau** (P2 không bắt đầu ở chỗ P1 kết thúc), nên chúng
+là những đoạn trích rời chứ không phải một lát cắt tuần tự.
+
+Muốn khâu chỗ đứt đó: `python scripts/video_stitch_parts.py` (giữ nguyên hai nửa gốc).
+
+## 9. Ván dài bất thường
+
+~25 ván dài hơn 30 phút — nhiều khả năng **hai ván bị dính làm một** do bỏ sót mốc.
+Tính lại mốc không cần cắt lại (~1 giây/video):
+
+```bat
+python scripts\video_split.py "E:\videos\GiangHo\<thư mục>" --stage segment --start-dist 4 --gap-step 4
+```
+
+Xem `starts.jpg` thấy ổn mới `--stage cut --overwrite`.
+
+## 10. Khi nào cần ổ D
+
+Chỉ khi E: xuống dưới ~200 GB. `yt_download.py` **tự chuyển sang D:** khi ổ chính còn
+dưới `--min-free` (mặc định 150 GB). Với kho clip thì dời bớt thư mục đã xong sang D:
+
+```bat
+move "E:\videos\GiangHo\<thư mục đã xong>" "D:\videos\GiangHo_done\"
+```
+
+**Chưa xoá bản gốc nào** — mọi video gốc vẫn nằm trong thư mục của nó dưới tên
+`00_goc_*`, để lỡ mốc ván sai còn cắt lại.
