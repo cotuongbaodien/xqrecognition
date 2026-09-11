@@ -7,7 +7,9 @@ export PYTHONIOENCODING=utf-8
 CUT_ARGS="--fen-step 0 --lead 120 --tail 120 --reencode never"
 
 say(){ echo "" >> $LOG; echo "### $(date '+%H:%M %d/%m') $*" >> $LOG; }
-nproc_match(){ powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*$1*' } | Measure-Object).Count" 2>/dev/null | tr -d '\r' | tail -1; }
+# PHAI loc theo TEN tien trinh truoc. Neu chi loc theo CommandLine thi chinh cau lenh
+# powershell nay cung chua chuoi can tim -> no TU KHOP VOI MINH -> cho mai mai (da dinh).
+nproc_match(){ powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='yt-dlp.exe'\" | Where-Object { \$_.CommandLine -like '*$1*' } | Measure-Object).Count" 2>/dev/null | tr -d '\r' | tail -1; }
 wait_gone(){ # $1 = chuoi trong command line, $2 = ten de log
   say "cho $2 xong"
   while true; do

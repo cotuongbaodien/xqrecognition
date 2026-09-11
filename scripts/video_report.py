@@ -121,8 +121,12 @@ def build(roots, out_dir):
             md.append(f"- … và {len(waiting) - 60} video nữa")
     md += ["", "⚠ = số ván dài hơn 30 phút, nhiều khả năng hai ván bị dính làm một; "
            "xem cách tách lại ở `docs/VIDEO_BATCH_RUNBOOK.md`."]
+    # Ghi NGUYÊN TỬ: pipeline và vòng --watch có thể cùng dựng báo cáo một lúc; ghi
+    # đè thẳng thì một bên đọc/ghi phải file cụt (đã làm chết vòng watch một lần).
     md_path = os.path.join(out_dir, "_BAO_CAO.md")
-    open(md_path, "w", encoding="utf-8").write("\n".join(md) + "\n")
+    tmp = md_path + ".tmp"
+    open(tmp, "w", encoding="utf-8").write("\n".join(md) + "\n")
+    os.replace(tmp, md_path)
 
     print(f"{len(done)} video đã cắt · {n_van} VÁN · {h_src:.1f} giờ nguồn · "
           f"{gb:.0f} GB clip · còn chờ {len(waiting)}")
