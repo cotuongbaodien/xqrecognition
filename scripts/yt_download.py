@@ -24,6 +24,15 @@ FMT = ("bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/"
        "b[height<=720][ext=mp4]/bv*[height<=720]+ba/b")
 
 
+def arch_count(path):
+    """Số dòng trong sổ archive = số video đã tải xong."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return sum(1 for _ in fh)
+    except OSError:
+        return 0
+
+
 def pick_dir(dirs, need_gb):
     """Thư mục đầu tiên còn đủ chỗ. Hết sạch thì trả None."""
     for d in dirs:
@@ -93,12 +102,15 @@ def main():
                "--no-overwrites", "--continue", "--ignore-errors", "--no-warnings",
                "--retries", "10", "--fragment-retries", "10",
                "--concurrent-fragments", "4", "--no-progress"] + chunk
+        before = arch_count(args.archive)
         r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode == 0:
-            n_ok += len(chunk)
-        else:
+        got = arch_count(args.archive) - before
+        n_ok += got
+        # KHÔNG dựa vào mã thoát để đếm: yt-dlp thoát khác 0 khi có BẤT KỲ video nào
+        # lỗi (vd Private) dù những cái còn lại tải ngon. Đếm theo sổ archive mới đúng.
+        if r.returncode != 0 and got == 0:
             n_err += 1
-            print(f"  lô lỗi (mã {r.returncode}): {r.stderr.strip()[-200:]}", flush=True)
+            print(f"  lô không tải được cái nào: {r.stderr.strip()[-160:]}", flush=True)
         print(f"[{min(i + args.chunk, len(ids))}/{len(ids)}] -> {out} "
               f"(ổ còn {free:.0f} GB) · {(time.time() - t0) / 60:.0f} phút", flush=True)
 
