@@ -305,6 +305,18 @@ dời vào cùng chỗ thành `00_goc_Nhâm Thầy Cúng vs Nghĩa Sing.mp4`.
 
 ## 9. Liên quan
 
+**Công cụ đi kèm** (chi tiết vận hành xem [`VIDEO_BATCH_RUNBOOK.md`](VIDEO_BATCH_RUNBOOK.md)):
+
+| Script | Việc |
+|---|---|
+| `video_report.py` | dựng lại `_BAO_CAO.md/.csv` từ trạng thái thật trên đĩa |
+| `video_verify.py` | soát clip, bắt file ghi dở (chỉ báo clip NGẮN hơn mong đợi) |
+| `video_shrink.py` | nén clip bằng NVENC H.264, bỏ qua file đã nhẹ |
+| `video_resplit_long.py` | soi lại ván dài bất thường = nhiều ván dính làm một; `--no-rescan` chỉ tính lại trên cache, có cổng chặn làm mất mốc cũ |
+| `video_rename_date.py` | thêm tiền tố `YYYYMMDD_` vào tên thư mục theo ngày quay |
+| `video_dupes.py` | dò file nguồn trùng tuyệt đối (size → hash rìa → hash đầy đủ) |
+| `video_stitch_parts.py` | khâu ván bị đứt đôi vì file gốc chia phần, kiểm bằng thế cờ |
+
 - `scripts/_fenutil.py` — helper FEN dùng chung (`expand_rows`, `mirror_fen`,
   `cell_diff`, `dist_to_start`, `dist_to_start_farside`).
 - `boarddetection/pipeline.py` — `recognize_image_2pass`, `passes_gate`.

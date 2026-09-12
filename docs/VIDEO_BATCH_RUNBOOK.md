@@ -1,24 +1,24 @@
 # Runbook — cắt kho video thành clip từng ván
 
-Cập nhật **2026-09-12** (chiều). Đây là tài liệu vận hành: đang ở đâu, chạy tiếp thế nào,
+Cập nhật **2026-09-12** (tối). Đây là tài liệu vận hành: đang ở đâu, chạy tiếp thế nào,
 và những cái bẫy đã trả giá. Công cụ chi tiết xem [`VIDEO_SPLIT.md`](VIDEO_SPLIT.md),
 danh sách nguồn xem [`VIDEO_SOURCES.md`](VIDEO_SOURCES.md).
 
 ---
 
-## 1. Đang ở đâu (2026-09-12, chiều)
+## 1. Đang ở đâu (2026-09-12, tối)
 
 | | |
 |---|---|
-| **Video đã cắt xong** | **764** |
-| **TỔNG SỐ VÁN** | **3 714** |
-| Giờ nội dung đã xử lý | 1 106,9 giờ |
-| Dung lượng clip | 621 GB |
-| — Giang Hồ (local) | 245 video · 1 681 ván · 432,4 giờ |
-| — YouTube | 519 video · 2 033 ván · 674,5 giờ |
-| YouTube đã tải | 514 / 580 (60 còn lại là video riêng tư không phải cờ) |
-| Ván dài hơn 30 phút | 415 → xem §9 |
-| Chỗ trống | E: ~890 GB · D: ~810 GB |
+| **Video đã cắt xong** | **768** |
+| **TỔNG SỐ VÁN** | **3 996** |
+| Giờ nội dung đã xử lý | 1 113,3 giờ |
+| Dung lượng clip | 818 GB |
+| Video còn chờ cắt | **0** |
+| Tên thư mục | **100% đã có tiền tố `YYYYMMDD_`** (§11) |
+| Chỗ trống | E: 590 GB · D: 755 GB |
+
+Không còn tiến trình nào đang chạy. Việc tiếp theo: §4.
 
 Số liệu sống: mở `E:\videos\GiangHo\_BAO_CAO.md`, hoặc chạy
 `python scripts/video_report.py`.
@@ -84,11 +84,12 @@ rồi thoát. Đừng giết ngang.
 
 ## 4. Thứ tự việc còn lại
 
-1. **Tách lại 133 thư mục** bằng ngưỡng nới — `video_resplit_long.py --no-rescan --apply`,
-   **+253 ván**, gần như miễn phí (§9).
-2. Quét dày (`--gap-step 4`) cho những thư mục §9 vẫn còn ván > 30 phút.
-3. **Lọc ván trùng bằng chuỗi FEN** trước khi đăng — §7, bắt buộc.
-4. Soát (`video_verify`) rồi nén (`video_shrink`) — thu hồi ~400 GB.
+1. **Nén clip** — `video_shrink.py`, thu hồi ~500 GB trong 818 GB. Chạy được ngay,
+   không đụng bản gốc, an toàn cả khi đang cắt (đòi `index.csv` + `--min-age`).
+2. **Quét dày cho ~354 ván vẫn dài > 30 phút** — `video_resplit_long.py --gap-step 4`
+   (~6 phút/thư mục). Đây là bước đắt, chỉ chạy cho chỗ còn sót (§9).
+3. **24 thư mục bị cổng chặn loại** khi tách lại — soi tay, xem mốc nào bị mất và vì sao.
+4. **Lọc ván trùng bằng chuỗi FEN** trước khi đăng — §7, bắt buộc.
 5. Kho TikTok (774 giờ) — đợt cuối, đúng thứ tự ưu tiên giang hồ → YouTube → TikTok.
 
 ## 5. BA LUẬT SỐNG CÒN (đều đã trả giá)
@@ -170,25 +171,30 @@ Muốn khâu chỗ đứt đó: `python scripts/video_stitch_parts.py` (giữ ng
 đã **bỏ sót mốc giữa chừng** (lúc xếp lại bàn tay che kín, hoặc hai bên đi ngay khi vừa
 xếp xong nên không mẫu 20 s nào rơi trúng thế khai cuộc).
 
-Chữa theo **hai bước, bước rẻ trước**:
+Chữa theo **hai bước, bước rẻ trước**. **Bước 1 đã chạy xong 12/09** (134 thư mục,
++254 ván); bước 2 còn ~354 ván chưa làm.
 
 ```bat
 ::  BƯỚC 1 — chỉ nới ngưỡng, tính lại trên cache sẵn có. Không nạp model, chưa tới 1 phút.
-python scriptsideo_resplit_long.py --no-rescan                  :: xem trước
-python scriptsideo_resplit_long.py --no-rescan --apply          :: cắt lại
+python scripts\video_resplit_long.py --no-rescan                  :: xem trước
+python scripts\video_resplit_long.py --no-rescan --apply          :: cắt lại
 
 ::  BƯỚC 2 — quét dày 4 s/frame đúng khoảng còn dài (~6 phút/thư mục, chỉ cho chỗ còn sót)
-python scriptsideo_resplit_long.py --min-long 30 --gap-step 4
+python scripts\video_resplit_long.py --min-long 30 --gap-step 4
 ```
 
 Kết quả đo bước 1 trên 322 thư mục:
 
 | | |
 |---|---|
-| Tách thêm được, **không mất mốc cũ nào** | **133 thư mục → +253 ván** |
+| Tách thêm được, **không mất mốc cũ nào** — ĐÃ CẮT LẠI | **134 thư mục → +254 ván** |
 | Bị cổng chặn loại (xem dưới) | 24 thư mục |
 | Không đổi | 165 thư mục |
 | Ván > 30 phút trong nhóm tách được | 191 → 130 |
+
+Cắt lại 134 thư mục mất ~45 phút (ffmpeg copy), **0 lỗi**. Kho đi từ 3 714 lên 3 996 ván
+(gồm cả 13 video mới trong ngày). Dung lượng clip 621 → 818 GB vì mỗi clip vẫn lấy dư
+2 phút hai đầu — `video_shrink.py` thu hồi lại được cỡ 500 GB.
 
 **Ngưỡng lỏng hơn KHÔNG bảo đảm ra nhiều mốc hơn.** Thêm mẫu vào một cụm làm cụm dài
 ra, mốc chốt (mẫu cuối cụm) trôi về sau rồi dính luật gộp `--min-gap` và biến mất —
@@ -214,3 +220,36 @@ move "E:\videos\GiangHo\<thư mục đã xong>" "D:\videos\GiangHo_done\"
 
 **Chưa xoá bản gốc nào** — mọi video gốc vẫn nằm trong thư mục của nó dưới tên
 `00_goc_*`, để lỡ mốc ván sai còn cắt lại.
+
+## 11. Tên thư mục — quy ước `YYYYMMDD_tên`
+
+Thư mục tải từ YouTube vốn đã có dạng `20260423_tên [id]`; thư mục từ file quay tay thì
+không, trộn vào là hết sắp theo thời gian. Đã chuẩn hoá **248 thư mục**, giờ cả 768 đều
+có tiền tố ngày.
+
+```bat
+python scripts\video_rename_date.py --dry-run     :: xem sẽ đổi thành gì
+python scripts\video_rename_date.py               :: đổi thật
+```
+
+Ngày lấy theo độ tin cậy giảm dần, vì **mỗi nguồn sai một kiểu**:
+
+| Nguồn | Số thư mục | Vì sao xếp ở đó |
+|---|---|---|
+| `com.apple.quicktime.creationdate` | 97 | iPhone ghi đúng lúc bấm quay |
+| `creation_time` trong container | 95 | tin được, nhưng file đã re-encode thì là ngày encode |
+| Cụm 6 số `YYMMDD` trong tên | 6 | quy ước của kho; đối chiếu được: `minhla26042302` nằm trong thư mục YouTube `20260423_...` |
+| Thừa hưởng từ bản cùng nhóm | 11 | `... - P1` chỉ còn mtime thì lấy ngày của bản đầy đủ |
+| `mtime` của file gốc | 38 | **chốt cuối** — đây là lúc copy/chia file, không phải lúc quay |
+
+Hai chỗ ngày trong TÊN lệch với metadata, đã theo metadata: `caotienminhla260908` →
+**20260818**, `minhla250426` → **20260424**. Cách đặt tên trong kho không nhất quán
+(vừa `YYMMDD` vừa `DDMMYY`) nên tên chỉ dùng để tham khảo, không dùng làm nguồn chính.
+
+Chỉ đổi tên **thư mục**, tên clip bên trong giữ nguyên: `index.csv` lưu tên file nên
+không vỡ, `_data/scan.json` có đường dẫn tuyệt đối nhưng đã cũ từ trước (bản gốc đã
+được dời vào trong thư mục thành `00_goc_*`, mọi công cụ tìm qua `src_of()`).
+
+⚠ Thư mục nào còn **file nguồn cùng tên ở tầng ngoài** thì không được đổi — `video_split.py`
+so tên file với tên thư mục để biết đã cắt chưa, đổi tên là nó cắt lại từ đầu. Công cụ
+tự bỏ qua những thư mục đó.
